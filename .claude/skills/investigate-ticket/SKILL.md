@@ -95,7 +95,8 @@ user can provide or do (a record Id, a trace flag window, a reproduction in a sa
 
 ## 5. Report
 
-1. `write_template` with kind `report`, then fill in `tickets/<KEY>/report.md`:
+1. `evidence_index` lists every saved artifact with the exact string to cite. Then
+   `write_template` with kind `report`, and fill in `tickets/<KEY>/report.md`:
    ticket summary, investigation steps, evidence table (E1, E2, …), root cause, fix, test
    results, risks, open questions. Set "Root cause status" to Confirmed or Not confirmed.
 2. For the Fix section run `propose-fix`. If the user only asked for the cause, write

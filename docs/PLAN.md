@@ -1,6 +1,18 @@
 # Salesforce Ticket Investigator — Plan
 
-Status: **awaiting confirmation**. No code has been written yet.
+Status: **built.** Phases 1 to 4 are implemented and tested against the simulated org; Phase 5
+(Jira) exists as an optional, read-only module that is off by default.
+
+What follows is the plan as it was agreed, kept for reference. Where the build departed from it,
+[`DECISIONS.md`](DECISIONS.md) says how and why. The main differences:
+
+- Two modes (`advise`, the default, and `apply`) instead of a single flow; see decision 2.
+- Developer Edition orgs are read-only unless enabled (the plan's open question 2); decision 3.
+- The simulated org lives in `simulator/`, not under `tests/`; decision 13.
+- More tools than the plan lists; decisions 14 and 27.
+- The "to verify" marks on CLI commands are resolved: see the tables in the README for what was
+  verified against the installed CLI and what has still not been verified against a live org.
+- Sections 2 and 9 describe the situation before the build; the open questions were answered.
 
 ## 1. My understanding
 
