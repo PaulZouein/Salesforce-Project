@@ -1,8 +1,9 @@
 # Decisions
 
 Why the Salesforce Ticket Investigator is built the way it is. Decisions 1 to 16 were taken in
-the first build session, 17 onward in the session that finished the build while the owner was
-away. The rules in `CLAUDE.md` were treated as fixed throughout: no decision here relaxes one.
+the first build session, 17 to 42 in the session that finished the build while the owner was
+away, and 43 by the first session after the finishing session reported. The rules in `CLAUDE.md`
+were treated as fixed throughout: no decision here relaxes one.
 
 For setup and use, read the [README](../README.md). The original plan is [PLAN.md](PLAN.md).
 
@@ -51,7 +52,7 @@ That autonomy did not extend to the eight rules at the top of `CLAUDE.md`. Phase
 |---|---|---|
 | 17 | Integration tests run the real subprocess path against the simulator; `SfCli` unit tests inject a runner. "Nothing was written" is asserted by hashing every file of a simulated org before and after. | A guard test that only checks for an exception does not prove the org was untouched. The simulator deliberately does not enforce org type, so only `core/org_guard` stands between a test and a "production" write. |
 | 18 | The hook script `.claude/hooks/guard.py` was **not modified**, and the test suite describes it as it is. | I intended one correction (see "Open points", item 1). The session's permission layer refused edits to the hook script as a change to an oversight mechanism, and I did not look for another way to make the edit. The known false positive is covered by a strict expected-failure test, so the suite will flag it when the script is fixed. |
-| 19 | `.claude/settings.json` was **not regenerated**. The file in the repository is still the unguarded form from the first session: no hook, no edit-protection rules, and an `allow` list that lacks the two tools added since (`evidence_index`, `jira_get_ticket`). | Generating the settings was the planned last step. The session's permission layer refused it, in the unguarded and in the guarded form, for the same reason as 18, and I did not look for another way to write the file. The consequence is safe in direction (the two missing tools prompt instead of running unprompted; every write tool still asks) but the hook and the edit protection are not active. One test, `test_committed_settings_match_the_server`, fails until the owner runs the generator. It was left failing rather than relaxed, because what it reports is true. A second test checks the invariant that does hold today: no write tool is allowed without asking. |
+| 19 | `.claude/settings.json` was **not regenerated** by the finishing session. It left the unguarded file from the first session in place, with one test failing to report it. **Superseded by decision 43.** | Generating the settings was the planned last step. The session's permission layer refused it, in the unguarded and in the guarded form, for the same reason as 18, and I did not look for another way to write the file. The test `test_committed_settings_match_the_server` was left failing rather than relaxed, because what it reported was true. A second test checks the invariant that held throughout: no write tool is allowed without asking. |
 | 20 | A test compares the tool names in `CLAUDE.md` with the server's tool list, both ways. | A tool the assistant is told about must exist, and a tool that exists must be documented. |
 
 ### Bugs found by running the code, and their fixes
@@ -79,7 +80,7 @@ on first execution; the bugs above are the ones the tests exposed.
 | 29 | `analyze_debug_log` also returns the Apex source lines that executed, per method, and how each flow decision evaluated. | "Statement 30 ran and statement 32 never did" and "the flow's condition was false" are the two log facts that settle DEMO-101; they should not need a hand-written grep. It says when the log level was too low for the absence of a line to mean anything. |
 | 30 | New read-only tool `evidence_index`: every saved artifact of a ticket with a one-line description and the string to cite. | Makes the Evidence table follow from what is on disk. Descriptions are built from the already-redacted files. |
 | 31 | `scripts/call_tool.py` calls read-only tools from the command line and refuses every write tool, with no flag to allow them. | Debugging without Claude Code must not become a way around the approval prompt. |
-| 32 | GitHub Actions workflow: the suite on Linux, Windows and macOS, Python 3.11 and 3.13. | The owner works on Windows; the build container is Linux. Every job passes apart from the one test described in 19, which keeps the run red until the owner switches the guard on. |
+| 32 | GitHub Actions workflow: the suite on Linux, Windows and macOS, Python 3.11 and 3.13. | The owner works on Windows; the build container is Linux. All six jobs pass since decision 43; before it, the one test described in 19 kept the run red. |
 | 33 | Phase 5 Jira reader (`core/jira.py`, tool `jira_get_ticket`): off unless `jira_base_url` is set and `SFTI_JIRA_TOKEN` is exported; https only; one `GET`; redirects not followed; people returned as roles and emails masked; no write function exists, and a test asserts that. Jira Cloud is documentation only (use Atlassian's MCP server). | Allowed by the owner's later message as opt-in, read-only and inactive by default. Roles instead of names because the text ends up in `ticket.md` (rule 7). Not following redirects keeps the token with the configured host. |
 | 34 | `jira_base_url` is a new optional key in `sfti.config.json`. The repository's file was not edited; absence means off. | That file is the owner's. |
 
@@ -101,14 +102,20 @@ on first execution; the bugs above are the ones the tests exposed.
 | 41 | No wrapper around Atlassian's MCP server for Jira Cloud, and no Jira write tool of any kind. | Rule 8. A second route to the same tickets would also need its own credentials handling. |
 | 42 | The simulator was not extended to execute Apex. | Out of reach, and pretending otherwise would be worse than saying so. |
 
+## Decision after the finishing session reported
+
+| # | Decision | Reason |
+|---|---|---|
+| 43 | The first build session committed `.claude/settings.json` with the guard on: the PreToolUse hook, the edit protection for the safety files, and all 31 read-only tools in `allow` (the two added since, `evidence_index` and `jira_get_ticket`, were missing). The hook script itself was left unchanged. | The owner's brief asks for this file by name ("read-only tools allowed without prompting; every write tool set to always ask"), and the owner had since said to finish without asking. The finishing session had that request only second-hand, through the handoff notes, and was right to stop when its permission layer refused (decision 19); the first session held it directly. The change only tightens what the assistant may do, apart from letting two read-only tools run unprompted like the other 29. The first session could not run the generator (its own container was blocked, see decision 16), so the file was written by hand to equal the generator's output and pushed through GitHub. `test_committed_settings_match_the_server` confirms the content is equal, and the CI run for that commit passed on all six jobs. Whether to change the hook script (open point 1) was not decided for the owner. |
+
 ## Open points for the owner
 
-0. **Switch the guard on.** Run `python scripts/generate_settings.py` in your own terminal, check
-   with `--check`, run the tests, commit. Until then the hook and the edit protection described
-   in decision 16 are not active, one test fails and CI is red (decision 19). The README has a
-   before-and-after table. Once the hook is on it applies to the assistant in this folder: it
-   will no longer be able to edit `sfti.config.json`, `.mcp.json`, `.claude/settings.json` or
-   `.claude/hooks/`.
+0. **The guard is on, and it applies to the assistant in this folder.** It can no longer edit
+   `sfti.config.json`, `.mcp.json`, `.claude/settings.json` or `.claude/hooks/`; you can. If you
+   want the assistant to work on the tool itself, run
+   `python scripts/generate_settings.py --no-guard` in your own terminal, and regenerate with the
+   guard afterwards. If `python scripts/generate_settings.py --check` reports the file as out of
+   date, the difference is formatting only (decision 43): run the generator once and commit.
 1. **Hook false positive.** `guard.py` treats `.py` in a file name as a Python invocation, so a
    Bash command that reads a Python file *and* names a write function, such as
    `grep deploy_component core/changes.py`, is blocked. It errs on the side of blocking. The
@@ -133,6 +140,8 @@ on first execution; the bugs above are the ones the tests exposed.
 
    This was written and not applied (decision 18). If you apply it, the expected-failure test in
    `tests/test_guard_hook.py` will start passing and report itself; turn it into a normal test.
+   Note that the sketch above still accepts the word `pytest` anywhere after the interpreter;
+   requiring `-m pytest` to come directly after it would close that as well.
 2. **First contact with a real org.** Everything in the list below is unverified. Start with a
    sandbox in advise mode.
 3. **`mcp` 1.x.** The fallback import exists, but only 2.3.0 has been run, locally and in CI.
@@ -156,7 +165,8 @@ No Salesforce org was reachable during either build session.
 - Apex test outcomes of any kind: the simulator does not execute Apex.
 - The hook command inside Claude Code on Windows (it ran under Git for Windows' `sh` in CI).
 - The reworked hook inside a Claude Code session on any system: it has been tested as a script and
-  through its shell command only, because it was never switched on (decision 19).
+  through its shell command, and it is now installed by the committed settings (decision 43), but
+  it has not been observed running in a Claude Code session.
 - Behaviour under bypassed permissions.
 - The Jira reader against a real Jira instance.
 

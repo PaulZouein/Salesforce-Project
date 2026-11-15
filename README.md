@@ -7,23 +7,12 @@ With your approval it can also deploy the fix to a sandbox, test it and roll it 
 
 Production orgs are read-only. That is enforced in code and has no override.
 
-> **Before first use: switch the guard on.** The settings in this repository do not yet contain
-> the guard hook or the edit protection for the safety files. Run this once, in your own terminal,
-> and commit the result:
->
-> ```
-> python scripts/generate_settings.py
-> ```
->
-> See [Switching the guard on](#switching-the-guard-on) for what it changes and why it was left
-> to you.
-
 - [What you get](#what-you-get)
 - [Try it in five minutes, without a Salesforce org](#try-it-in-five-minutes-without-a-salesforce-org)
 - [Set it up for a real org](#set-it-up-for-a-real-org)
 - [The two modes](#the-two-modes)
 - [Safety model](#safety-model)
-- [Switching the guard on](#switching-the-guard-on)
+- [Permission settings and the guard](#permission-settings-and-the-guard)
 - [Tool reference](#tool-reference)
 - [The demonstration: DEMO-101](#the-demonstration-demo-101)
 - [What was verified, and what was not](#what-was-verified-and-what-was-not)
@@ -80,8 +69,6 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 ```
-
-If the guard is not on yet, switch it on now: `python scripts/generate_settings.py`.
 
 **2. Create the simulated orgs.**
 
@@ -258,8 +245,8 @@ Other guards in `core/`:
 
 ### The hook, and what it does not guarantee
 
-`.claude/hooks/guard.py` is a PreToolUse hook. It is active once you have
-[switched the guard on](#switching-the-guard-on). It blocks three things:
+`.claude/hooks/guard.py` is a PreToolUse hook, installed by the committed
+[permission settings](#permission-settings-and-the-guard). It blocks three things:
 
 1. running `sf` or `sfdx` directly from Bash (also through `npx`, a path, or after `&&`);
 2. calling the core write functions from a Python one-liner in Bash, which would skip the
@@ -283,36 +270,40 @@ production stays read-only and advise mode still refuses fix-applying writes. Do
 bypassed permissions with `apply` mode unless the only non-production orgs you are logged in to
 are ones you are happy to see changed without being asked.
 
-## Switching the guard on
+## Permission settings and the guard
 
-`.claude/settings.json` is generated from the MCP server's own tool lists by
-`scripts/generate_settings.py`. The file currently in the repository is the unguarded form from
-the start of the build, and it is out of date by two tools.
+`.claude/settings.json` holds the generator's output for the MCP server's own tool lists
+(`scripts/generate_settings.py`), with the guard on. A test fails when the committed file and the
+generator disagree.
 
-| | Now (as committed) | After `python scripts/generate_settings.py` |
-|---|---|---|
-| Write tools | all 6 in `ask`: every call prompts | the same |
-| Read-only tools | 29 of 31 in `allow`; `evidence_index` and `jira_get_ticket` are missing, so they prompt | all 31 in `allow` |
-| Direct `sf` / `sfdx` in Bash | denied by permission rule | denied by permission rule **and** by the hook |
-| Guard hook | **not installed** | installed for Bash, Edit and Write |
-| Edits to `sfti.config.json`, `.mcp.json`, `.claude/settings.json`, `.claude/hooks/` | **not protected** beyond the instruction in `CLAUDE.md` | denied by permission rule and by the hook |
-| Production write block, mode gate, redaction, limits | active (they live in `core/`) | the same |
+| What | How it is set |
+|---|---|
+| Write tools | all 6 in `ask`: every call prompts |
+| Read-only tools | all 31 in `allow` |
+| Direct `sf` / `sfdx` in Bash | denied by permission rule and by the hook |
+| Guard hook | installed for Bash, Edit and Write |
+| Edits to `sfti.config.json`, `.mcp.json`, `.claude/settings.json`, `.claude/hooks/` | denied by permission rule and by the hook |
+| Production write block, mode gate, redaction, limits | in `core/`, independent of these settings |
 
-Why it was left to you: the session that finished the build was not permitted to modify
-`.claude/settings.json` or the hook script. Those files define what the assistant may do, and
-changing them is yours to do. It is one command; then check and commit:
+The guard applies to the assistant in this folder: it cannot edit those four safety files. You
+can, in your own editor or terminal.
 
 ```
-python scripts/generate_settings.py
-python scripts/generate_settings.py --check
-python -m pytest
-git add .claude/settings.json
-git commit -m "Turn the guard on"
+python scripts/generate_settings.py            # regenerate after adding or renaming a tool
+python scripts/generate_settings.py --check    # is the committed file up to date?
+python scripts/generate_settings.py --no-guard # same permission lists, no hook, no edit protection
 ```
 
-Until you do, one test fails on purpose (`test_committed_settings_match_the_server`) and the CI
-run is red because of it. `python scripts/generate_settings.py --no-guard` writes the same
-permission lists without the hook and the edit protection, for working on the tool itself.
+Use `--no-guard` only while you want the assistant to work on the tool itself (its settings, its
+hook or the config file), and regenerate with the guard afterwards.
+
+How the guard came to be on: the session that finished the build was not permitted to write
+`.claude/settings.json` and stopped there, leaving it to you. The session that started the build,
+acting on your brief ("read-only tools allowed without prompting; every write tool set to always
+ask"), then committed the file. It could not run the generator, so the file was written by hand
+to equal its output; the test above confirms the content is equal. If `--check` reports a
+difference in formatting, run the generator once. See decisions 19 and 43 in
+[`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Tool reference
 
@@ -459,10 +450,11 @@ The error envelope (`name`, `message`, `exitCode`, `status`, `stack`) was captur
 ### Verified by the test suite
 
 The suite ran on Linux in the build container, and on Linux, Windows and macOS (Python 3.11 and
-3.13) in GitHub Actions. On every one of them all tests pass except the one that waits for you to
-[switch the guard on](#switching-the-guard-on). It covers the CLI wrapper, the guard, queries and redaction, metadata,
-logs, tests, the whole write path, the report checks, the MCP server over stdio and the hook. It
-runs against the **simulator**, through the real subprocess path.
+3.13) in GitHub Actions, where all six jobs pass (Linux, Python 3.13: 583 passed, 1 expected
+failure, which is the hook's documented false positive). It covers the CLI wrapper, the guard,
+queries and redaction, metadata, logs, tests, the whole write path, the report checks, the MCP
+server over stdio and the hook. It runs against the **simulator**, through the real subprocess
+path.
 
 ### Not verified against a live org
 
@@ -486,8 +478,9 @@ from the CLI's source, and may need adjusting on first contact with a real org:
 - The hook command inside Claude Code on Windows. (The command itself ran under Git for Windows'
   `sh` in CI; Claude Code invoking it on Windows was not observed.)
 - The hook and the permission rules under bypassed permissions.
-- The hook running inside Claude Code at all: it was tested as a script and through its shell
-  command, but it has not been switched on in a Claude Code session since it was reworked.
+- The hook running inside a Claude Code session: it is tested as a script and through its shell
+  command, and it is installed by the committed settings, but it has not been observed running in
+  a Claude Code session since it was reworked.
 - The optional Jira reader against a real Jira instance.
 
 Each section of `describe_object` (automation) and `recent_org_changes` is queried separately, so
@@ -512,7 +505,8 @@ of them reports an error for a section, that is one of the items above.
 | "contains characters that cmd.exe interprets" (Windows) | An argument contains one of `& | < > ^ % " !`. Usually the project path. Move the project to a path without those characters. |
 | A query is rejected for its `LIMIT` | Narrow the `WHERE` clause; raise `max_row_limit` only if you must. |
 | The hook blocks an innocent command | See the known false positive above. Rephrase the command, or run it yourself. |
-| Every tool call is blocked right after pulling | The hook cannot lock a session by design. If it happens, check that `.claude/hooks/guard.py` exists and that `python` (or `SFTI_PYTHON`) runs; then report it. |
+| A hook error is shown on every tool call | `python` (or `SFTI_PYTHON`) does not run in the shell Claude Code uses for hooks. Set `SFTI_PYTHON` to the full path of your interpreter and restart Claude Code. The error does not block the call. |
+| Every tool call is blocked right after pulling | The hook cannot lock a session by design. If it happens, check that `.claude/hooks/guard.py` exists and that `python` (or `SFTI_PYTHON`) runs; then report it. To get out, run `python scripts/generate_settings.py --no-guard` in your own terminal. |
 | You want to start a ticket again | Delete `tickets/<KEY>/` yourself. |
 
 ## Optional: reading tickets from Jira (Phase 5)
@@ -569,9 +563,6 @@ python -m pytest
 No org, no Salesforce CLI and no network are needed. Integration tests start the simulator's `sf`
 launcher exactly as the wrapper would start the real CLI. `.github/workflows/tests.yml` runs the
 suite on Linux, Windows and macOS.
-
-One test, `test_committed_settings_match_the_server`, fails until you have
-[switched the guard on](#switching-the-guard-on).
 
 After adding or renaming a tool in `mcp_server/server.py`, regenerate the permission lists, which
 are built from the server's own tool lists:
