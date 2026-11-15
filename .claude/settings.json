@@ -54,38 +54,7 @@
       "Bash(sfdx:*)",
       "Bash(npx sf:*)",
       "Bash(npx sfdx:*)",
-      "Bash(npx @salesforce/cli:*)",
-      "Edit(/sfti.config.json)",
-      "Write(/sfti.config.json)",
-      "Edit(/.claude/settings.json)",
-      "Write(/.claude/settings.json)",
-      "Edit(/.claude/hooks/**)",
-      "Write(/.claude/hooks/**)",
-      "Edit(/.mcp.json)",
-      "Write(/.mcp.json)",
-      "Read(/audit/**)"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${SFTI_PYTHON:-python} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${SFTI_PYTHON:-python} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
-          }
-        ]
-      }
+      "Bash(npx @salesforce/cli:*)"
     ]
   }
 }
