@@ -59,7 +59,7 @@ def test_unknown_keys_are_reported_and_cannot_unlock_anything(tmp_path):
     assert len(settings.warnings) == 3
     assert not hasattr(settings, "allow_production_writes")
     assert set(settings.to_dict()) == {"mode", "allow_developer_edition_writes", "allow_apex_tests_on_production",
-                                       "default_row_limit", "max_row_limit", "warnings"}
+                                       "default_row_limit", "max_row_limit", "jira_base_url", "warnings"}
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -94,3 +94,16 @@ def test_repository_default_is_advise():
     assert raw["mode"] == "advise"
     assert raw["allow_developer_edition_writes"] is False
     assert raw["allow_apex_tests_on_production"] is False
+
+
+@pytest.mark.parametrize("value", ["http://jira.example.com", "jira.example.com", "https://user:pw@jira.example.com",
+                                   "https://jira.example.com/?token=x", "ftp://x", 7, True, ["https://x"]])
+def test_jira_url_must_be_plain_https_or_the_reader_stays_off(tmp_path, value):
+    settings = write(tmp_path, {"jira_base_url": value})
+    assert settings.jira_base_url == "" and len(settings.warnings) == 1
+
+
+def test_jira_is_off_by_default_and_accepts_an_https_url(tmp_path):
+    assert load_settings(tmp_path).jira_base_url == ""
+    assert write(tmp_path, {"jira_base_url": "https://jira.example.com/jira/"}).jira_base_url == \
+        "https://jira.example.com/jira"

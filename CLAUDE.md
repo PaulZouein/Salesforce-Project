@@ -91,6 +91,7 @@ Read-only tools run without a prompt.
 | Settings and mode | `get_config` |
 | Orgs and production check | `list_orgs`, `org_info` |
 | Ticket folder, earlier tickets | `init_ticket`, `list_tickets`, `search_tickets` |
+| Ticket text from Jira (optional, off by default, read-only) | `jira_get_ticket` |
 | Get source from the org | `retrieve_components` (`Type:Name`, at most 50 per call) |
 | Read what was retrieved | `list_files`, `search_metadata`, `read_file` |
 | Understand a flow | `summarize_flow` |

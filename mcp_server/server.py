@@ -148,6 +148,22 @@ def search_tickets(pattern: str, max_results: int = 60) -> dict[str, Any]:
 
 
 @tool()
+def jira_get_ticket(ticket_key: str, max_comments: int = 50) -> dict[str, Any]:
+    """Phase 5, optional. Read one ticket from Jira Server / Data Center: fields and comments. Read-only.
+
+    Off unless the user set "jira_base_url" in sfti.config.json and the SFTI_JIRA_TOKEN environment
+    variable. People come back as roles, not names. Nothing is ever written to Jira: there is no
+    tool that comments on, edits or transitions a ticket. When it is off, ask the user to paste
+    the ticket.
+
+    Args:
+        ticket_key: The Jira key, for example ABC-123.
+        max_comments: Maximum comments to return (up to 200).
+    """
+    return investigator().jira_get_ticket(ticket_key, max_comments)
+
+
+@tool()
 def retrieve_components(org: str, ticket_key: str, components: list[str], wait_minutes: int = 10) -> dict[str, Any]:
     """Retrieve metadata components from the org into tickets/<KEY>/metadata/ and commit them.
 

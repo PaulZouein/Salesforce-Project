@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import apex_scan, apex_tests, dependencies, evidence, flow_summary, log_analysis, logs, metadata, query, report, timeline
+from . import apex_scan, apex_tests, dependencies, evidence, flow_summary, jira, log_analysis, logs, metadata, query, report, timeline
 from .audit import AuditLog
 from .changes import ChangeManager
 from .config import Settings, load_settings, project_root
@@ -42,6 +42,7 @@ class Investigator:
             "apply: the tool may deploy and test, asking for approval on every write."
         )
         out["production"] = "Writes to production are always refused, whatever these settings say."
+        out["jira"] = jira.status(settings)
         return out
 
     def list_changes(self, ticket_key: str | None = None, limit: int = 20) -> dict[str, Any]:
@@ -158,6 +159,9 @@ class Investigator:
 
     def export_report_html(self, ticket_key: str, filename: str = "report.md") -> dict[str, Any]:
         return report.export_report_html(self.workspace, ticket_key, filename)
+
+    def jira_get_ticket(self, ticket_key: str, max_comments: int = 50) -> dict[str, Any]:
+        return jira.get_ticket(self.settings(), ticket_key, max_comments=max_comments)
 
     def evidence_index(self, ticket_key: str) -> dict[str, Any]:
         return evidence.evidence_index(self.workspace, ticket_key)

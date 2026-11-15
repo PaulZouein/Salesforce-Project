@@ -38,6 +38,9 @@ class Settings:
     allow_apex_tests_on_production: bool = False
     default_row_limit: int = 50
     max_row_limit: int = 200
+    #: Phase 5, optional: base URL of a Jira Server / Data Center instance for the read-only ticket
+    #: reader. Empty means off. The token is never stored here (see ``core.jira``).
+    jira_base_url: str = ""
     #: Problems found while loading the file; surfaced to the user by ``get_config``.
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
@@ -48,6 +51,7 @@ class Settings:
             "allow_apex_tests_on_production": self.allow_apex_tests_on_production,
             "default_row_limit": self.default_row_limit,
             "max_row_limit": self.max_row_limit,
+            "jira_base_url": self.jira_base_url,
             "warnings": list(self.warnings),
         }
 
@@ -84,6 +88,25 @@ def _bounded_int(value: Any, name: str, default: int, low: int, high: int, warni
     return value
 
 
+def _jira_url(value: Any, warnings: list[str]) -> str:
+    """An https URL without credentials, or empty (off) when anything is wrong with it."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str):
+        from urllib.parse import urlsplit
+
+        try:
+            parsed = urlsplit(value.strip())
+        except ValueError:
+            parsed = None
+        if parsed and parsed.scheme == "https" and parsed.hostname and not (
+            parsed.username or parsed.password or parsed.query or parsed.fragment
+        ):
+            return value.strip().rstrip("/")
+    warnings.append("jira_base_url must be an https URL without credentials; the Jira reader stays off.")
+    return ""
+
+
 def load_settings(root: Path | None = None) -> Settings:
     """Load settings, falling back to the safe defaults on any problem."""
     path = (root or project_root()) / CONFIG_FILENAME
@@ -112,7 +135,10 @@ def load_settings(root: Path | None = None) -> Settings:
         "allow_apex_tests_on_production",
         "default_row_limit",
         "max_row_limit",
+        "jira_base_url",
     }
+    jira_base_url = _jira_url(raw.get("jira_base_url"), warnings)
+
     for key in raw:
         if key not in known and not key.startswith("_"):
             warnings.append(f"Unknown setting {key!r} ignored.")
@@ -127,5 +153,6 @@ def load_settings(root: Path | None = None) -> Settings:
         ),
         default_row_limit=default_limit,
         max_row_limit=max_limit,
+        jira_base_url=jira_base_url,
         warnings=tuple(warnings),
     )
