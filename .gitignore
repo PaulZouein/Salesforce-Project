@@ -1,0 +1,22 @@
+# Ticket workspaces can contain customer metadata and data: never committed.
+tickets/*
+!tickets/.gitkeep
+# Local audit database (may contain previous record values).
+audit/
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+# Salesforce CLI and editors
+.sf/
+.sfdx/
+.vscode/
+.idea/
+.DS_Store
+# Local Claude Code overrides
+.claude/settings.local.json
