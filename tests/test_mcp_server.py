@@ -126,8 +126,23 @@ def test_check_logic(tmp_path, monkeypatch, capsys):
     assert "out of date" in capsys.readouterr().out
 
 
+def test_committed_settings_never_allow_a_write_tool_without_asking():
+    """Holds for the file in the repository whether or not it has been regenerated."""
+    committed = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    allow, ask, deny = (committed["permissions"][k] for k in ("allow", "ask", "deny"))
+    for name in server.WRITE_TOOLS:
+        assert PREFIX + name in ask and PREFIX + name not in allow
+    known = {PREFIX + name for name in server.READ_ONLY_TOOLS}
+    assert {entry for entry in allow if entry.startswith("mcp__")} <= known  # nothing unknown, no wildcard
+    assert {"Bash(sf:*)", "Bash(sfdx:*)"} <= set(deny)
+
+
 def test_committed_settings_match_the_server():
-    """The settings in the repository list exactly the server's tools: writes ask, reads are allowed."""
+    """The settings in the repository are the generator's output for the server's current tools.
+
+    If this fails, the file is out of date: run ``python scripts/generate_settings.py`` (it also turns
+    on the guard hook and the edit protection) and commit the result. See docs/DECISIONS.md, decision 19.
+    """
     committed = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
     module = generate_settings()
     assert committed in (module.build(guard=True), module.build(guard=False)), \
