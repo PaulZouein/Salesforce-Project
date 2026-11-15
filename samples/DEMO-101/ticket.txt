@@ -1,0 +1,62 @@
+Key: DEMO-101
+Title: Premium customer cases are not set to High priority
+Type: Bug
+Status: Open
+Priority: High
+Created: 2026-11-12 09:40
+Reporter: Support team lead
+Environment: Production (alias demo-prod). Sandbox available (alias demo-sandbox).
+
+Description
+-----------
+Since the start of this week some cases for our Premium customers are created with Medium
+priority instead of High. Our rule is that every case for a Premium account is High priority,
+so these cases are missing their response time.
+
+It does not happen every time. Yesterday I created a case by hand for a Premium account and it
+was High as expected.
+
+Steps to reproduce
+1. Take an account whose Support Tier is Premium.
+2. Create a case for it.
+3. Look at the Priority field.
+
+Expected: Priority = High
+Actual: sometimes Priority = Medium
+
+Examples: case 00001003, case 00001004, case 00001006
+
+Comments
+--------
+[2026-11-12 10:05] Support agent:
+I think the Case Premium Notification flow is broken. We did not get the usual notification for
+these cases either. It was changed recently.
+
+[2026-11-12 10:32] Salesforce admin:
+The flow was last activated on 20 October and has worked since. I checked the three accounts and
+they are all Premium. I do not see a validation rule or workflow rule on Case.
+
+[2026-11-12 11:15] Support team lead:
+More information: all the wrong cases were created at 2 am. That is the new nightly import from
+the order system, which went live on Monday night (9 to 10 November). Cases created by agents
+during the day are fine.
+
+[2026-11-12 11:48] Integration developer:
+The import sends cases through the REST composite API in batches of up to 200, as one user
+(the integration user). It does not set Priority, it relies on Salesforce for that. Not every
+imported case is wrong: 00001001 came from the same import as 00001003 and it is High. Last
+night's import (12 November) looks fine: 00001009 and 00001010 are High.
+
+[2026-11-12 14:20] Support agent:
+Workaround we tried: opening a wrong case and saving it again. Priority stays Medium.
+We now fix the priority by hand every morning.
+
+[2026-11-12 15:02] Salesforce admin:
+A debug log was captured for the integration user during the import of 11 November
+(log 07LWs00000L0001MAA) in case it helps.
+
+History
+-------
+2026-11-12 09:40 Created
+2026-11-12 10:00 Priority changed from Medium to High
+2026-11-12 11:20 Assigned to the Salesforce team
