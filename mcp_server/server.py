@@ -42,6 +42,8 @@ server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
 
 READ_ONLY_TOOLS: list[str] = []
 WRITE_TOOLS: list[str] = []
+#: Tool name -> the registered callable (returns JSON text). Used by scripts/call_tool.py and tests.
+TOOLS: dict[str, Callable[..., str]] = {}
 
 _investigator: Investigator | None = None
 
@@ -76,6 +78,7 @@ def tool(*, write: bool = False) -> Callable[[Callable[..., dict[str, Any]]], Ca
         wrapper.__signature__ = inspect.signature(fn).replace(return_annotation=str)  # type: ignore[attr-defined]
         del wrapper.__wrapped__  # type: ignore[attr-defined]
         (WRITE_TOOLS if write else READ_ONLY_TOOLS).append(fn.__name__)
+        TOOLS[fn.__name__] = wrapper
         server.tool()(wrapper)
         return wrapper
 
@@ -506,6 +509,19 @@ def write_template(ticket_key: str, kind: str, overwrite: bool = False) -> dict[
         overwrite: Replace an existing file.
     """
     return investigator().write_template(ticket_key, kind, overwrite)
+
+
+@tool()
+def evidence_index(ticket_key: str) -> dict[str, Any]:
+    """List every artifact saved for a ticket (query results, debug logs, test runs, Apex scripts,
+    retrieved source, metadata commits) with a one-line description and the exact string to cite.
+
+    Use it when writing the report's Evidence table. Local only; touches no org.
+
+    Args:
+        ticket_key: The ticket key.
+    """
+    return investigator().evidence_index(ticket_key)
 
 
 @tool()

@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import apex_scan, apex_tests, dependencies, flow_summary, log_analysis, logs, metadata, query, report, timeline
+from . import apex_scan, apex_tests, dependencies, evidence, flow_summary, log_analysis, logs, metadata, query, report, timeline
 from .audit import AuditLog
 from .changes import ChangeManager
 from .config import Settings, load_settings, project_root
@@ -158,6 +158,9 @@ class Investigator:
 
     def export_report_html(self, ticket_key: str, filename: str = "report.md") -> dict[str, Any]:
         return report.export_report_html(self.workspace, ticket_key, filename)
+
+    def evidence_index(self, ticket_key: str) -> dict[str, Any]:
+        return evidence.evidence_index(self.workspace, ticket_key)
 
     def list_tickets(self) -> dict[str, Any]:
         return report.list_tickets(self.workspace)

@@ -103,6 +103,7 @@ Read-only tools run without a prompt.
 | Logs | `list_debug_logs`, `get_debug_log`, `analyze_debug_log` |
 | Tests | `run_apex_tests` (non-production) |
 | Proposed change as a diff | `workspace_diff` |
+| What can be cited | `evidence_index` |
 | Report | `write_template`, `validate_report`, `validate_comment`, `export_report_html` |
 | History of writes | `list_changes`, `audit_log` |
 
