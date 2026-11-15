@@ -126,10 +126,10 @@ def scan_apex_source(source: str, path: str) -> list[dict[str, Any]]:
         if _HARDCODED_ID_RE.search(raw_lines[number - 1] if number <= len(raw_lines) else ""):
             if not raw_lines[number - 1].lstrip().startswith(("//", "*", "/*")):
                 add("hardcoded_id", number)
-        if _SINGLE_ROW_RE.match(line):
-            add("single_row_query", number)
         if _QUERY_INDEX_RE.search(line):
             add("query_indexed_without_check", number)
+        elif _SINGLE_ROW_RE.match(line):
+            add("single_row_query", number)
 
         catch = _CATCH_RE.search(line)
         if catch:

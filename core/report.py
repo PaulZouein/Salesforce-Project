@@ -276,8 +276,6 @@ def validate_report(workspace: Workspace, ticket_key: str, filename: str = "repo
     for number, line in enumerate(lines, start=1):
         for match in _CITATION_RE.finditer(line):
             rel, first, last = match.group(1), match.group(2), match.group(3)
-            if "<" in rel or rel.startswith("Example"):
-                continue
             entry: dict[str, Any] = {"report_line": number, "citation": match.group(0).strip("`")}
             candidate = (base / rel).resolve()
             if base not in candidate.parents or not candidate.is_file():
