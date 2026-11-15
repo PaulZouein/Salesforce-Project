@@ -478,9 +478,10 @@ from the CLI's source, and may need adjusting on first contact with a real org:
 - The hook command inside Claude Code on Windows. (The command itself ran under Git for Windows'
   `sh` in CI; Claude Code invoking it on Windows was not observed.)
 - The hook and the permission rules under bypassed permissions.
-- The hook running inside a Claude Code session: it is tested as a script and through its shell
-  command, and it is installed by the committed settings, but it has not been observed running in
-  a Claude Code session since it was reworked.
+- The hook inside Claude Code beyond one observation: with the committed settings pulled into a
+  Claude Code cloud session on Linux, the hook blocked a Bash command with its own message (the
+  documented false positive). Its Edit and Write rules, and Claude Code on Windows and macOS, were
+  not observed.
 - The optional Jira reader against a real Jira instance.
 
 Each section of `describe_object` (automation) and `recent_org_changes` is queried separately, so

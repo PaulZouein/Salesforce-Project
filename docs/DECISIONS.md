@@ -114,8 +114,9 @@ on first execution; the bugs above are the ones the tests exposed.
    `sfti.config.json`, `.mcp.json`, `.claude/settings.json` or `.claude/hooks/`; you can. If you
    want the assistant to work on the tool itself, run
    `python scripts/generate_settings.py --no-guard` in your own terminal, and regenerate with the
-   guard afterwards. If `python scripts/generate_settings.py --check` reports the file as out of
-   date, the difference is formatting only (decision 43): run the generator once and commit.
+   guard afterwards. The committed file was checked after decision 43: it is byte-for-byte the
+   generator's output, `python scripts/generate_settings.py --check` reports it as up to date, and
+   the full suite passes (583 passed, 1 expected failure).
 1. **Hook false positive.** `guard.py` treats `.py` in a file name as a Python invocation, so a
    Bash command that reads a Python file *and* names a write function, such as
    `grep deploy_component core/changes.py`, is blocked. It errs on the side of blocking. The
@@ -164,9 +165,10 @@ No Salesforce org was reachable during either build session.
 - Creating `TraceFlag` and `DebugLevel` records through the Tooling REST API.
 - Apex test outcomes of any kind: the simulator does not execute Apex.
 - The hook command inside Claude Code on Windows (it ran under Git for Windows' `sh` in CI).
-- The reworked hook inside a Claude Code session on any system: it has been tested as a script and
-  through its shell command, and it is now installed by the committed settings (decision 43), but
-  it has not been observed running in a Claude Code session.
+- The reworked hook inside a Claude Code session, beyond one observation: after decision 43 the
+  finishing session pulled the settings and the hook blocked a Bash command there with its own
+  message (the false positive of open point 1), on Linux. Its Edit and Write rules, and Claude
+  Code on Windows and macOS, were not observed.
 - Behaviour under bypassed permissions.
 - The Jira reader against a real Jira instance.
 
