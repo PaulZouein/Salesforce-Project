@@ -296,7 +296,7 @@ class OrgGuard:
         if info.classification == CLASS_PRODUCTION:
             settings = self._settings()
             if not settings.allow_apex_tests_on_production:
-                self._log(operation, OUTCOME_BLOCKED, info, target, ticket_key=ticket_key,
+                self._log(operation, OUTCOME_BLOCKED, info, target, ticket_key=ticket_key, approved_by=approved_by,
                           detail={"reason": "apex tests on production are disabled"})
                 raise ProductionTestRunBlockedError(
                     f"Apex tests were not run: {target!r} is classified as production "
@@ -305,7 +305,7 @@ class OrgGuard:
                     "sfti.config.json yourself and use run_apex_tests_on_production.",
                 )
             if not production_confirmed:
-                self._log(operation, OUTCOME_BLOCKED, info, target, ticket_key=ticket_key,
+                self._log(operation, OUTCOME_BLOCKED, info, target, ticket_key=ticket_key, approved_by=approved_by,
                           detail={"reason": "production test run requires the approved production tool"})
                 raise ProductionTestRunBlockedError(
                     f"{target!r} is production. Use run_apex_tests_on_production, which asks for approval each time.",
