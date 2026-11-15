@@ -154,6 +154,22 @@ def test_last_line_is_in_range(ticket):
     assert ticket(**{"CaseEscalationService.cls:30": "CaseEscalationService.cls:35"})["ok"] is True
 
 
+def test_bare_file_name_is_a_mention_but_with_a_line_or_folder_it_must_resolve(ticket):
+    out = ticket(**{"None.\n": "The class `CaseEscalationService.cls` and `fix.diff` are named here.\n"})
+    assert out["ok"] is True and out["citations"] == {"valid": 3, "broken": 0}
+    assert ticket(**{"None.\n": "See `CaseEscalationService.cls:30`.\n"})["citations"]["broken"] == 1
+    assert ticket(**{"None.\n": "See `classes/CaseEscalationService.cls`.\n"})["citations"]["broken"] == 1
+
+
+def test_citing_a_file_with_a_drafted_fix_is_warned(ticket, project):
+    assert ticket()["warnings"] == []
+    service = project.ticket(KEY) / SERVICE
+    service.write_text(service.read_text().replace("                return;", "                continue;"))
+    out = ticket()
+    assert out["ok"] is True
+    assert len(out["warnings"]) == 1 and "carry local edits" in out["warnings"][0] and SERVICE in out["warnings"][0]
+
+
 def test_citation_outside_the_ticket_folder_fails(ticket, project):
     (project.root / "sfti.config.json").write_text("{}")
     out = ticket(**{f"`{ticket.saved}`": "`../../sfti.config.json`"})
@@ -292,6 +308,8 @@ def test_markdown_subset():
     assert "<blockquote><p>quote</p></blockquote>" in html and "<hr>" in html
     assert '<a href="https://example.com/a">link</a>' in html
     assert "hidden" not in html and "<p>text</p>" in html
+    assert markdown_to_html("> **Note.** one\n> two\n> three\n\nafter") == \
+        "<blockquote><p><strong>Note.</strong> one two three</p></blockquote>\n<p>after</p>"
 
 
 # --- past tickets -----------------------------------------------------------------------

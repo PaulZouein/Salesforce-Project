@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .errors import InputValidationError, WorkspaceError
+from .errors import InputValidationError, SfInvestigatorError, WorkspaceError
+from .gitrepo import GitRepo
 from .workspace import Workspace, validate_ticket_key
 
 REQUIRED_REPORT_SECTIONS = (
@@ -257,6 +258,29 @@ def _personal_data(lines: list[str]) -> tuple[list[dict[str, Any]], list[dict[st
     return emails, phones
 
 
+def _cited_files_with_local_edits(base: Path, cited: set[str]) -> list[str]:
+    """Cited metadata files whose working copy differs from the version last retrieved from the org."""
+    from .metadata import load_baselines  # local import: metadata does not depend on this module
+
+    repo_path = base / "metadata"
+    if not (repo_path / ".git").exists():
+        return []
+    baselines = load_baselines(repo_path)
+    repo = GitRepo(repo_path)
+    out = []
+    for rel in sorted(cited):
+        if not rel.startswith("metadata/"):
+            continue
+        inner = rel[len("metadata/"):]
+        commit = baselines.get(inner)
+        try:
+            if commit and repo.differs(commit, None, [inner]):
+                out.append(rel)
+        except SfInvestigatorError:
+            continue
+    return out
+
+
 def validate_report(workspace: Workspace, ticket_key: str, filename: str = "report.md") -> dict[str, Any]:
     """Check a report against the evidence and data-minimization rules."""
     path = workspace.resolve(ticket_key, filename)
@@ -279,6 +303,10 @@ def validate_report(workspace: Workspace, ticket_key: str, filename: str = "repo
             entry: dict[str, Any] = {"report_line": number, "citation": match.group(0).strip("`")}
             candidate = (base / rel).resolve()
             if base not in candidate.parents or not candidate.is_file():
+                if "/" not in rel and not first:
+                    # A bare file name without a line (`CaseService.cls`) names a component in prose;
+                    # it is not a citation. With a folder or a line number it must resolve.
+                    continue
                 broken.append({**entry, "reason": "file not found in the ticket folder"})
                 continue
             if first:
@@ -291,6 +319,13 @@ def validate_report(workspace: Workspace, ticket_key: str, filename: str = "repo
             valid.append(entry)
     for item in broken:
         problems.append(f"Line {item['report_line']}: citation `{item['citation']}` is broken ({item['reason']}).")
+    edited = _cited_files_with_local_edits(base, {c["citation"].split(":")[0] for c in valid})
+    if edited:
+        warnings.append(
+            "Cited source file(s) carry local edits (a drafted fix), so their lines no longer all match what "
+            "was retrieved from the org: " + ", ".join(edited) + ". Say in the report which version the "
+            "citations refer to, and check that each cited line still shows what you claim."
+        )
 
     def citations_in(span: tuple[int, int] | None) -> int:
         return 0 if span is None else sum(1 for c in valid if span[0] <= c["report_line"] < span[1])
@@ -463,6 +498,7 @@ pre{background:var(--code);padding:14px;border-radius:8px;overflow-x:auto;font-s
 pre code{background:none;padding:0;overflow-wrap:normal}
 .tablewrap{overflow-x:auto;margin:14px 0}table{border-collapse:collapse;width:100%;background:var(--card);font-size:0.94rem}
 th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--code)}
+td:has(>code:only-child){min-width:17rem}
 blockquote{margin:12px 0;padding:2px 14px;border-left:3px solid var(--accent);color:var(--muted)}
 .add{background:var(--add);display:block}.del{background:var(--del);display:block}.hunk{color:var(--muted);display:block}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:0.8rem;font-weight:600;
@@ -574,7 +610,11 @@ def markdown_to_html(markdown: str) -> str:
         elif stripped.startswith(">"):
             flush_paragraph()
             close_lists()
-            out.append("<blockquote><p>" + _inline(stripped.lstrip("> ")) + "</p></blockquote>")
+            quoted = [stripped.lstrip(">").strip()]
+            while i + 1 < len(lines) and lines[i + 1].strip().startswith(">"):
+                i += 1
+                quoted.append(lines[i].strip().lstrip(">").strip())
+            out.append("<blockquote><p>" + _inline(" ".join(q for q in quoted if q)) + "</p></blockquote>")
         elif re.match(r"^(-{3,}|\*{3,})$", stripped):
             flush_paragraph()
             close_lists()

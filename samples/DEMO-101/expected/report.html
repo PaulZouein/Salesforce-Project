@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Investigation report: DEMO-101</title><style>
+:root{--bg:#fbfaf7;--fg:#1d1c1a;--muted:#6b6862;--line:#e2dfd8;--card:#ffffff;--accent:#0b6e4f;--code:#f2efe8;
+--add:#e3f5e9;--del:#fbe6e4}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe6;--muted:#a09d95;--line:#33322e;--card:#1e1e1b;
+--accent:#5fd0a5;--code:#262622;--add:#173524;--del:#40201d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:900px;margin:0 auto;padding:32px 16px 80px}
+h1{font-size:1.7rem;line-height:1.25;margin:0 0 12px}h2{font-size:1.2rem;margin:36px 0 10px;padding-top:14px;
+border-top:1px solid var(--line)}h3{font-size:1.02rem;margin:22px 0 6px}
+p{margin:10px 0}a{color:var(--accent)}code{background:var(--code);padding:1px 5px;border-radius:4px;
+font:0.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+pre{background:var(--code);padding:14px;border-radius:8px;overflow-x:auto;font-size:0.86rem;line-height:1.5}
+pre code{background:none;padding:0;overflow-wrap:normal}
+.tablewrap{overflow-x:auto;margin:14px 0}table{border-collapse:collapse;width:100%;background:var(--card);font-size:0.94rem}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--code)}
+td:has(>code:only-child){min-width:17rem}
+blockquote{margin:12px 0;padding:2px 14px;border-left:3px solid var(--accent);color:var(--muted)}
+.add{background:var(--add);display:block}.del{background:var(--del);display:block}.hunk{color:var(--muted);display:block}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:0.8rem;font-weight:600;
+border:1px solid var(--line);margin-bottom:14px}.ok{color:var(--accent)}.warn{color:#b45309}
+footer{margin-top:48px;color:var(--muted);font-size:0.85rem}hr{border:0;border-top:1px solid var(--line);margin:24px 0}
+ul,ol{padding-left:24px}li{margin:3px 0}
+</style></head><body><main><div class="badge ok">Evidence check passed · 23 citations verified</div>
+<h1>Investigation report: DEMO-101</h1>
+<div class="tablewrap"><table><tbody><tr><td>Ticket</td><td>DEMO-101: Premium customer cases are not set to High priority</td></tr><tr><td>Org investigated</td><td><code>demo-prod</code> (00DWs000000PrdAMAS) for records, code and the debug log; <code>demo-sandbox</code> (00DWs000000SbxAMAS) for the test run</td></tr><tr><td>Org classification</td><td><code>demo-prod</code>: production, read-only. <code>demo-sandbox</code>: sandbox</td></tr><tr><td>Mode</td><td>advise</td></tr><tr><td>Root cause status</td><td>Confirmed</td></tr><tr><td>Report date</td><td>2026-11-15</td></tr></tbody></table></div>
+<blockquote><p><strong>Simulated orgs.</strong> <code>demo-prod</code> and <code>demo-sandbox</code> are the simulated orgs created by <code>python -m simulator setup</code>. The simulator serves metadata, records and a recorded debug log, and it does not execute Apex: the Apex test outcomes below come from the simulator's rules, not from a Salesforce runtime. The evidence chain itself (records, source lines, log lines) is read exactly as it would be from a real org.</p></blockquote>
+<h2>Ticket summary</h2>
+<p>Since the nightly case import went live (first run 10 November 2026, 02:00), some cases for Premium accounts are created with Priority Medium instead of High. Cases created by agents are correct, some imported cases are correct, and the import of 12 November was entirely correct. Re-saving a wrong case does not correct it. The reporter's team suspected the Case Premium Notification flow.</p>
+<h2>Investigation steps</h2>
+<ol>
+<li><strong>Scope.</strong> <code>get_config</code>: mode advise. <code>org_info</code>: <code>demo-prod</code> is production (read-only), <code>demo-sandbox</code> is a sandbox. <code>search_tickets</code> found no earlier ticket on this subject.</li>
+<li><strong>Records.</strong> Queried every case created since 9 November with its account tier, creator and creation time (E1), then only the Premium-account cases whose priority is not High (E2).</li>
+<li><strong>What runs on Case.</strong> <code>describe_object</code> with automation: one trigger (<code>CaseTrigger</code>, before insert and before update), one record-triggered flow (<code>Case_Premium_Notification</code>, after save, on create), no validation rule, no workflow rule.</li>
+<li><strong>Source.</strong> Retrieved the trigger, its handler, the service, the test class and the flow from <code>demo-prod</code> (metadata commit <code>fe98962</code>) and read the path for a case insert (E3 to E7). <code>scan_apex</code> gave one lead, a <code>return</code> inside a loop; it was read in context before being used.</li>
+<li><strong>Debug log.</strong> Downloaded the log of the 11 November import and read which statements ran (E8 to E12).</li>
+<li><strong>Timeline.</strong> Setup audit trail and last-modified dates since 3 November (E13, E14, E15).</li>
+<li><strong>Dependencies.</strong> <code>find_dependencies</code> on <code>CaseEscalationService</code>, confirmed with <code>search_metadata</code> (E16).</li>
+<li><strong>Tests.</strong> Ran the existing test class on <code>demo-sandbox</code> (E17) after checking that the sandbox holds the same class versions as production (E14, E18).</li>
+<li><strong>Fix.</strong> Drafted the change locally and produced <code>fix.diff</code>. Nothing was deployed: advise mode.</li>
+</ol>
+<p>Hypotheses and how each was decided:</p>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>Hypothesis</th><th>Result</th><th>Decided by</th></tr></thead><tbody><tr><td>H1</td><td>The priority rule in Apex does not handle a batch that mixes Premium and non-Premium accounts</td><td><strong>Confirmed</strong></td><td>E1, E5, E8 to E10</td></tr><tr><td>H2</td><td>The Case Premium Notification flow is broken or changes the priority</td><td>Ruled out</td><td>E7, E11, E12, E15</td></tr><tr><td>H3</td><td>The import bypasses the trigger, or sets Priority itself</td><td>Ruled out</td><td>E8, E10, and three imported cases are High in E1</td></tr><tr><td>H4</td><td>The affected accounts are not Premium at the time of creation</td><td>Ruled out for the current data</td><td>E1, E9</td></tr><tr><td>H5</td><td>A change deployed just before the first failure introduced the defect</td><td>Open, see Open questions</td><td>E13, E14</td></tr></tbody></table></div>
+<h2>Evidence</h2>
+<p>Paths are relative to <code>tickets/DEMO-101/</code>. Source citations refer to the version retrieved from <code>demo-prod</code> (metadata commit <code>fe98962</code>); the working tree now also holds the proposed fix, shown in <code>fix.diff</code>, which replaces line 30 of the service.</p>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>Artifact</th><th>What it shows</th></tr></thead><tbody><tr><td>E1</td><td><code>queries/20261115-115410-cases-since-9-nov.json</code></td><td>10 cases since 9 November. The 7 created by the integration user (005Ws000001IntgIAB) fall into three batches with identical creation times: 10 Nov 02:00:14 (4 cases), 11 Nov 02:00:09 (2 cases), 12 Nov 02:00:11 (2 cases). In case-number order, every Premium case that comes after a Standard-account case of its batch is Medium (500Ws00000C0003IAA, 500Ws00000C0004IAA, 500Ws00000C0006IAA); every Premium case with no Standard case before it is High (500Ws00000C0001IAA, 500Ws00000C0009IAA, 500Ws00000C0010IAA). The 12 November batch contains no Standard case. The two agent-created cases are High.</td></tr><tr><td>E2</td><td><code>queries/20261115-115449-premium-cases-not-high.json</code></td><td>Exactly 3 cases belong to a Premium account and are not High: the three named above.</td></tr><tr><td>E3</td><td><code>metadata/force-app/main/default/triggers/CaseTrigger.trigger:5-7</code></td><td>On before insert the trigger passes the whole batch (<code>Trigger.new</code>) to <code>CaseTriggerHandler.beforeInsert</code>.</td></tr><tr><td>E4</td><td><code>metadata/force-app/main/default/classes/CaseTriggerHandler.cls:6-8</code></td><td><code>beforeInsert</code> passes the whole list to <code>CaseEscalationService.applyPremiumPriority</code>.</td></tr><tr><td>E5</td><td><code>metadata/force-app/main/default/classes/CaseEscalationService.cls:26-33</code></td><td>The loop over the batch. For a case whose account is missing or not Premium, line 30 executes <code>return;</code>, which leaves the method. <code>c.Priority = HIGH_PRIORITY;</code> on line 32 is therefore never reached for any later case of the batch.</td></tr><tr><td>E6</td><td><code>metadata/force-app/main/default/classes/CaseTriggerHandler.cls:10-20</code></td><td>On update, the rule is re-applied only to cases whose <code>AccountId</code> changed (line 14). Re-saving a case without changing its account does not re-evaluate the priority.</td></tr><tr><td>E7</td><td><code>metadata/force-app/main/default/flows/Case_Premium_Notification.flow-meta.xml:31-41</code></td><td>The flow's only decision tests <code>$Record.Priority</code> equal to High and, if true, calls the notification action. The flow runs after save on create (lines 55-57) and contains no element that updates a record.</td></tr><tr><td>E8</td><td><code>logs/07LWs00000L0001MAA.log:4</code></td><td>In the import transaction of 11 November, <code>CaseTrigger</code> ran on before insert: the import does not bypass the trigger.</td></tr><tr><td>E9</td><td><code>logs/07LWs00000L0001MAA.log:22</code></td><td>In the second loop, the first case's account is 001Ws00000A1b2dIAB with Support Tier Standard.</td></tr><tr><td>E10</td><td><code>logs/07LWs00000L0001MAA.log:23-25</code></td><td>Statement 28 (the tier test) and then statement 30 (<code>return;</code>) execute, and the next event is the exit of <code>applyPremiumPriority</code>. The log, captured with Apex code at FINEST (line 1), contains no execution of statement 32.</td></tr><tr><td>E11</td><td><code>logs/07LWs00000L0001MAA.log:40</code></td><td>The insert saves 2 cases, after the trigger finished.</td></tr><tr><td>E12</td><td><code>logs/07LWs00000L0001MAA.log:44-51</code></td><td>The flow then runs once per case and its <code>High_Priority</code> outcome evaluates to false both times (lines 46 and 51): it sees the Medium priority that the trigger left in place.</td></tr><tr><td>E13</td><td><code>queries/20261115-115436-setup-audit-trail.json</code></td><td>Setup changes since 3 November: the connected app for the nightly import was created on 9 November 11:20 and the Apex class <code>CaseEscalationService</code> was changed on 9 November 16:42, both before the first import run.</td></tr><tr><td>E14</td><td><code>queries/20261115-115436-apex-class-last-modified.json</code></td><td><code>CaseEscalationService</code> was last modified on 9 November 16:42; the handler and the test class on 18 August.</td></tr><tr><td>E15</td><td><code>queries/20261115-115436-flow-versions.json</code></td><td>The only flow version is version 2, active, last modified on 20 October: the flow did not change in November.</td></tr><tr><td>E16</td><td><code>metadata/force-app/main/default/classes/CaseTriggerHandler.cls:19</code></td><td>The second and last caller of <code>applyPremiumPriority</code> (the first is E4). <code>find_dependencies</code> lists the handler and the test class as the only components using the service.</td></tr><tr><td>E17</td><td><code>queries/20261115-115436-apex-tests.json</code></td><td>On <code>demo-sandbox</code>, <code>CaseEscalationServiceTest</code> passes: 2 tests, 0 failures.</td></tr><tr><td>E18</td><td><code>queries/20261115-115436-sandbox-apex-class-last-modified.json</code></td><td>The sandbox holds the same last-modified dates for the three classes as production (E14).</td></tr><tr><td>E19</td><td><code>metadata/force-app/main/default/classes/CaseEscalationServiceTest.cls:10-34</code></td><td>The two existing tests each insert a single case. Neither inserts a batch that mixes account tiers.</td></tr></tbody></table></div>
+<h2>Root cause</h2>
+<p><code>CaseEscalationService.applyPremiumPriority</code> stops processing the whole batch at the first case whose account is not Premium: line 30 is <code>return;</code> inside the loop over the batch, where the comment above it ("nothing to do" for this case) describes a <code>continue</code> (E5). Every Premium case that comes after such a case in the same insert keeps the priority it arrived with.</p>
+<p>Evidence chain:</p>
+<ol>
+<li><strong>Symptom in data.</strong> The only Premium cases that are not High are three imported cases, and each one follows a Standard-account case in its import batch (E1, E2).</li>
+<li><strong>Code that produces it.</strong> The trigger hands the whole batch to the service (E3, E4), and the service returns from the method at the first non-Premium case (E5).</li>
+<li><strong>Observed in the failing transaction.</strong> In the 11 November import, the first case belongs to a Standard account (E9), statement 30 executes, the method exits and statement 32 never runs (E10). The Premium case inserted in the same batch, 500Ws00000C0006IAA, is Medium (E1, E11).</li>
+<li><strong>Why only sometimes.</strong> A case created by hand is a batch of one, so the early return has nothing left to skip. An imported batch is affected only when a non-Premium case precedes a Premium one: the 12 November batch contains only Premium cases and is correct (E1).</li>
+<li><strong>Why re-saving does not help.</strong> The update path re-applies the rule only when the account changes (E6).</li>
+<li><strong>Why the notification is missing.</strong> The flow notifies only when Priority is High (E7). It evaluated to false for both cases of the 11 November batch because the trigger had left them at Medium (E12). The missing notification is a consequence of this defect, not a second defect. The flow does not write Priority (E7) and did not change in November (E15).</li>
+</ol>
+<p>One point is not established by an artifact and is labelled accordingly. <strong>Hypothesis:</strong> the position of each case inside the 10 November batch is taken from case-number order (E1); there is no debug log for that run. The 11 November batch, for which the log exists, does not depend on this.</p>
+<h2>Fix</h2>
+<p>Change one statement in <code>CaseEscalationService.cls</code> and add the missing test.</p>
+<pre><code>--- a/force-app/main/default/classes/CaseEscalationService.cls
++++ b/force-app/main/default/classes/CaseEscalationService.cls
+<span class="hunk">@@ -27,7 +27,7 @@</span>             Account account = accountsById.get(c.AccountId);
+             if (account == null || account.Support_Tier__c != PREMIUM_TIER) {
+                 // Not a premium customer: nothing to do.
+<span class="del">-                return;</span><span class="add">+                continue;</span>             }
+             c.Priority = HIGH_PRIORITY;
+         }
+</code></pre>
+<p>The full diff, including the new test method <code>mixedBatchEscalatesEveryPremiumCase</code> in <code>CaseEscalationServiceTest</code>, is in <code>fix.diff</code>.</p>
+<p><strong>Why this layer.</strong> The rule already lives in <code>CaseEscalationService</code>, and the defect is one statement in it. Correcting that statement keeps a single place that decides the priority. Moving the rule into the flow, or adding a second automation, would leave two places to maintain and would not remove the faulty loop.</p>
+<p><strong>Impact.</strong> The method has two callers, both in <code>CaseTriggerHandler</code> (E4, E16); the test class is the only other component that references the service (E16). For a batch of one, and for a batch whose cases are all Premium or all non-Premium, behaviour is unchanged. For a mixed batch, Premium cases after a non-Premium case now become High, on insert and on an account change. The flow needs no change: once the priority is High before save, its decision is true and it notifies (E7).</p>
+<p><strong>What you change (advise mode: nothing was deployed).</strong></p>
+<ol>
+<li>In <code>CaseEscalationService.cls</code>, line 30: replace <code>return;</code> with <code>continue;</code>.</li>
+<li>In <code>CaseEscalationServiceTest.cls</code>: add the test method from <code>fix.diff</code>.</li>
+<li>Deploy both classes together to <code>demo-sandbox</code>, running <code>CaseEscalationServiceTest</code>.</li>
+<li>Promote to production through your normal release path.</li>
+</ol>
+<p><strong>Existing records.</strong> A code fix does not repair the three cases already saved with the wrong priority (E2): 500Ws00000C0003IAA, 500Ws00000C0004IAA, 500Ws00000C0006IAA. This is a data correction, proposed separately from the code change: set Priority to High on those three cases after confirming with the support lead that none was deliberately lowered. Re-run the query of E2 first, because imports before the fix can add more.</p>
+<h2>Test results</h2>
+<ul>
+<li><strong>Existing tests, <code>demo-sandbox</code>:</strong> <code>CaseEscalationServiceTest</code>, 2 tests, both pass (E17). They</li>
+</ul>
+<p>pass with the defect present because neither covers a mixed batch (E19). That gap is how the defect reached production unnoticed by the test suite.</p>
+<ul>
+<li><strong>New test:</strong> <code>mixedBatchEscalatesEveryPremiumCase</code> inserts a Standard-account case followed by</li>
+</ul>
+<p>a Premium-account case in one statement and asserts Medium and High. It was not run: the tool is in advise mode, and the simulated org does not execute Apex.</p>
+<ul>
+<li><strong>Reproduction:</strong> not executed in the sandbox for the same reasons. The failing behaviour is</li>
+</ul>
+<p>taken from the production debug log (E8 to E12) rather than from a new run.</p>
+<p>Test plan after you deploy to the sandbox:</p>
+<ol>
+<li>Run <code>CaseEscalationServiceTest</code>: expect 3 passing tests. Without the code change, the new test fails on its second assertion.</li>
+<li>Insert two cases in one API call, the first for a Standard account and the second for a Premium account, without Priority: expect Medium and High, and one notification.</li>
+<li>Insert one case by hand for a Premium account: expect High, as today.</li>
+<li>After the next nightly import, re-run the query of E2: expect no new rows.</li>
+</ol>
+<h2>Risks</h2>
+<ul>
+<li><strong>Low code risk.</strong> One statement; no signature, query or DML changes.</li>
+<li><strong>More cases become High</strong> than in the last days, which is the intended rule, so more</li>
+</ul>
+<p>notifications are sent by the flow.</p>
+<ul>
+<li><strong>Data already affected</strong> stays wrong until the separate data correction is done.</li>
+<li><strong>Until the fix is in production,</strong> every nightly import that mixes tiers adds wrong cases. The</li>
+</ul>
+<p>manual morning correction has to continue until then.</p>
+<h2>Open questions</h2>
+<ol>
+<li><strong>Did the 9 November change introduce the <code>return</code>?</strong> The class was modified on 9 November 16:42, the evening before the first failing import (E13, E14). <strong>Hypothesis:</strong> that change introduced the early return. It is not confirmed: the org holds only the current version of the class. To confirm it, compare with the previous version in your source control or deployment history. The root cause above does not depend on the answer.</li>
+<li><strong>Are older mixed-batch inserts affected?</strong> The queries cover cases created since 9 November. If other bulk loads into Case ran since the class changed, widen the query of E2.</li>
+<li><strong>Sandbox equality.</strong> E18 compares last-modified dates, not source text. Retrieve the service from <code>demo-sandbox</code> before deploying if the sandbox was refreshed or edited recently; the deploy tool also checks for drift.</li>
+</ol>
+<footer>Generated 2026-11-15 11:57 UTC from report.md. Local file: not posted anywhere.</footer></main></body></html>

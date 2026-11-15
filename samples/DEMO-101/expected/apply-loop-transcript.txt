@@ -1,0 +1,71 @@
+## get_config
+mode = apply
+
+## org_info demo-sandbox
+classification = sandbox, writes_allowed = True
+
+## retrieve_components demo-sandbox (the fix is based on the sandbox's own version)
+retrieved 4 files
+
+## attempt 1: add the new test only, validate
+REFUSED [deploy_failed] The validation failed with status 'Failed'. The org was not changed.
+  test failure: CaseEscalationServiceTest.mixedBatchEscalatesEveryPremiumCase: System.AssertException: Assertion Failed: Every Premium case in a mixed batch should be High: Expected: High, Actual: Medium
+change CHG-<id>: status = failed
+-> the new test fails against the current service: it reproduces the defect. The org is unchanged.
+
+## attempt 2: service fix and test together, validate
+change CHG-<id>: status = validated, tests_run = 3
+Validation only: the org was not changed.
+
+## deploy_component
+change CHG-<id>: status = deployed, verified = True, tests_run = 3
+deployed: ApexClass:CaseEscalationService [Changed], ApexClass:CaseEscalationServiceTest [Changed]
+pre_commit = <commit>, post_commit = <commit>
+
+## run_apex_tests
+outcome = Passed, passing = 3, failing = 0
+  Pass CaseEscalationServiceTest.premiumAccountCaseIsHighPriority
+  Pass CaseEscalationServiceTest.standardAccountCaseKeepsPriority
+  Pass CaseEscalationServiceTest.mixedBatchEscalatesEveryPremiumCase
+
+## re-check the symptom in data
+Premium cases that are not High: 3 (500Ws00000C0003IAA, 500Ws00000C0004IAA, 500Ws00000C0006IAA)
+-> as expected: the code fix does not repair records that were saved before it.
+
+## update_records (data correction, a separate approved step)
+change CHG-<id>: status = applied, verified = True
+  500Ws00000C0003IAA: Priority Medium -> High
+  500Ws00000C0004IAA: Priority Medium -> High
+  500Ws00000C0006IAA: Priority Medium -> High
+Premium cases that are not High: 0
+
+## the same write on production
+REFUSED [production_write_blocked] 'deploy_component' was refused: 'demo-prod' is classified as production (IsSandbox = False, OrganizationType = 'Enterprise Edition'). Production is read-only.
+
+## rollback_change (records, then the deploy)
+change CHG-<id>: status = rolled_back, restored = 3 records
+change CHG-<id>: status = rolled_back, verified = True, restored = ApexClass:CaseEscalationService, ApexClass:CaseEscalationServiceTest
+run_apex_tests: outcome = Passed, tests_ran = 2 (the new test is gone)
+Premium cases that are not High: 3 (back to the starting state)
+
+## list_changes
+  CHG-<id>  deploy   failed
+  CHG-<id>  deploy   validated
+  CHG-<id>  deploy   rolled_back
+  CHG-<id>  records  rolled_back
+
+## audit_log (oldest first)
+  validate_component     allowed   demo-sandbox (sandbox)
+  validate_component     failed    demo-sandbox (sandbox)
+  validate_component     allowed   demo-sandbox (sandbox)
+  validate_component     succeeded demo-sandbox (sandbox)
+  deploy_component       allowed   demo-sandbox (sandbox)
+  deploy_component       succeeded demo-sandbox (sandbox)
+  run_apex_tests         allowed   demo-sandbox (sandbox)
+  update_records         allowed   demo-sandbox (sandbox)
+  update_records         succeeded demo-sandbox (sandbox)
+  deploy_component       blocked   demo-prod (production)
+  rollback_change        allowed   demo-sandbox (sandbox)
+  rollback_change        succeeded demo-sandbox (sandbox)
+  rollback_change        allowed   demo-sandbox (sandbox)
+  rollback_change        succeeded demo-sandbox (sandbox)

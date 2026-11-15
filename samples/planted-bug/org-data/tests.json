@@ -6,7 +6,7 @@
         "regex": "for \\(Case c : cases\\)\\s*\\{\\s*Account account[^}]*?!= PREMIUM_TIER\\)\\s*\\{[^}]*?\\breturn;"
       },
       "message": "System.AssertException: Assertion Failed: Every Premium case in a mixed batch should be High: Expected: High, Actual: Medium",
-      "stack_trace": "Class.CaseEscalationServiceTest.mixedBatchEscalatesEveryPremiumCase: line 58, column 1"
+      "stack_trace": "Class.CaseEscalationServiceTest.mixedBatchEscalatesEveryPremiumCase: line 51, column 1"
     }
   }
 }

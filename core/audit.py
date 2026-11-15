@@ -183,7 +183,8 @@ class AuditLog:
         if ticket_key:
             sql += " WHERE ticket_key = ?"
             params.append(ticket_key)
-        sql += " ORDER BY ts DESC, change_id DESC LIMIT ?"
+        # rowid breaks ties between changes recorded within the same second (newest first).
+        sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
         params.append(max(1, min(int(limit), 500)))
         with closing(self._connect()) as conn:
             rows = conn.execute(sql, params).fetchall()

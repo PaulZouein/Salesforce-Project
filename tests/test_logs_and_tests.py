@@ -220,7 +220,7 @@ def test_failing_apex_test_is_reported_not_raised(inv, sim):
     assert (out["outcome"], out["passing"], out["failing"]) == ("Failed", 2, 1)
     failure = out["failures"][0]
     assert failure["name"].endswith(".mixedBatchEscalatesEveryPremiumCase")
-    assert "Expected: High, Actual: Medium" in failure["message"] and "line 58" in failure["stack_trace"]
+    assert "Expected: High, Actual: Medium" in failure["message"] and "line 51" in failure["stack_trace"]
     assert "coverage" not in out
 
 
