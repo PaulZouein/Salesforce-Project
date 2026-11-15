@@ -7,6 +7,7 @@ its methods. Each method returns plain JSON-serializable data and raises
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -14,6 +15,8 @@ from . import apex_scan, apex_tests, dependencies, evidence, flow_summary, jira,
 from .audit import AuditLog
 from .changes import ChangeManager
 from .config import Settings, load_settings, project_root
+from .errors import SfInvestigatorError
+from .knowledge import OrgKnowledge, fetch_last_modified
 from .org_guard import OrgGuard
 from .sf_cli import SfCli
 from .workspace import Workspace
@@ -27,6 +30,8 @@ class Investigator:
         self.audit = AuditLog(self.root / "audit" / "audit.db")
         self.guard = OrgGuard(self.cli, settings_provider=self.settings, audit=self.audit)
         self.changes = ChangeManager(self.cli, self.guard, self.workspace, self.audit)
+        self.knowledge = OrgKnowledge(self.root)
+        self._org_ids: dict[str, tuple[str, float]] = {}
 
     def settings(self) -> Settings:
         return load_settings(self.root)
@@ -71,6 +76,15 @@ class Investigator:
 
     def org_info(self, org: str) -> dict[str, Any]:
         info = self.guard.org_info(org).to_dict()
+        if info.get("org_id"):
+            self._org_ids[org] = (info["org_id"], time.monotonic())
+            known = self.knowledge.load(info["org_id"])
+            info["org_memory"] = {
+                "components": len(known["components"]), "objects": len(known["objects"]),
+                "notes": sum(1 for n in known["notes"] if not n.get("superseded_by")),
+                "hint": "recall_org_knowledge shows what earlier tickets learned about this org."
+                if known["components"] or known["notes"] else "Nothing remembered about this org yet.",
+            }
         settings = self.settings()
         info["mode"] = settings.mode
         info["what_is_allowed"] = _allowed_summary(info["classification"], info["writes_allowed"], settings)
@@ -80,8 +94,12 @@ class Investigator:
 
     def retrieve_components(self, org: str, ticket_key: str, components: Sequence[str],
                             wait_minutes: int = 10) -> dict[str, Any]:
-        return metadata.retrieve_components(self.cli, self.workspace, org, ticket_key, components,
-                                            wait_minutes=wait_minutes)
+        out = metadata.retrieve_components(self.cli, self.workspace, org, ticket_key, components,
+                                           wait_minutes=wait_minutes)
+        learned = self._remember(lambda org_id: self._learn_from_retrieve(org, org_id, ticket_key, out))
+        if learned is not None:
+            out["org_memory"] = learned
+        return out
 
     def search_metadata(self, ticket_key: str, pattern: str, **kwargs: Any) -> dict[str, Any]:
         return metadata.search_metadata(self.workspace, ticket_key, pattern, **kwargs)
@@ -102,10 +120,112 @@ class Investigator:
                                settings=self.settings(), **kwargs)
 
     def describe_object(self, org: str, sobject: str, **kwargs: Any) -> dict[str, Any]:
-        return query.describe_object(self.cli, org, sobject, **kwargs)
+        out = query.describe_object(self.cli, org, sobject, **kwargs)
+        if isinstance(out.get("automation"), dict):
+            self._remember(lambda org_id: self.knowledge.record_automation(org_id, org, sobject, out["automation"]),
+                           org=org)
+        return out
 
     def find_dependencies(self, org: str, name: str, **kwargs: Any) -> dict[str, Any]:
-        return dependencies.find_dependencies(self.cli, org, name, **kwargs)
+        out = dependencies.find_dependencies(self.cli, org, name, **kwargs)
+        self._remember(lambda org_id: self.knowledge.record_dependencies(
+            org_id, org, name, kwargs.get("component_type"), out), org=org)
+        return out
+
+    # -- org memory --------------------------------------------------------------------------
+    #
+    # What earlier investigations learned about an org. Learning happens as a side effect of the
+    # read tools and must never make one of them fail, hence ``_remember``.
+
+    ORG_ID_CACHE_SECONDS = 300.0
+
+    def _org_id(self, org: str) -> str:
+        """Org Id for filing memory. Cached briefly; guard decisions never use this cache."""
+        cached = self._org_ids.get(org)
+        if cached and time.monotonic() - cached[1] < self.ORG_ID_CACHE_SECONDS:
+            return cached[0]
+        org_id = self.guard.org_info(org).org_id
+        if not org_id:
+            raise SfInvestigatorError(f"The org Id of {org!r} could not be read, so nothing can be remembered for it.")
+        self._org_ids[org] = (org_id, time.monotonic())
+        return org_id
+
+    def _remember(self, action: Any, *, org: str | None = None) -> Any:
+        try:
+            return action(self._org_id(org) if org else None)
+        except Exception as exc:  # noqa: BLE001 - memory is a convenience, never a reason to fail a tool
+            return {"skipped": f"The org memory was not updated: {getattr(exc, 'message', exc)}"}
+
+    def _learn_from_retrieve(self, org: str, _unused: Any, ticket_key: str, result: dict[str, Any]) -> dict[str, Any]:
+        org_id = self._org_id(org)
+        files = [{**f, "path": str(f["path"])[len("metadata/"):]} for f in result.get("files", []) if f.get("path")]
+        last_modified: dict[str, str] = {}
+        by_type: dict[str, list[str]] = {}
+        for f in files:
+            by_type.setdefault(str(f.get("type")), []).append(str(f.get("name")))
+        for component_type, names in by_type.items():
+            if component_type in ("ApexClass", "ApexTrigger", "Flow"):
+                try:
+                    last_modified.update({k: v for k, v in fetch_last_modified(
+                        self.cli, org, component_type, names).items() if v})
+                except SfInvestigatorError:
+                    pass  # the fingerprint still detects change at the next retrieve
+        return self.knowledge.record_retrieve(
+            org_id, org, self.workspace.metadata_dir(ticket_key), files, ticket_key=ticket_key,
+            last_modified=last_modified)
+
+    def recall_org_knowledge(self, org: str, query_text: str, *, check: bool = True, limit: int = 10) -> dict[str, Any]:
+        """What is remembered about this org for the given words, double-checked against the org."""
+        org_id = self._org_id(org)
+        found = self.knowledge.search(org_id, query_text, limit=limit)
+        specs = [c["component"] for c in found["components"]]
+        for note in found["notes"]:
+            specs.extend(note.get("components", []))
+        specs = list(dict.fromkeys(specs))
+        out: dict[str, Any] = {"org": org, "org_id": org_id, **found}
+        if check and specs:
+            try:
+                verified = self.knowledge.verify(self.cli, org, org_id, components=specs)
+            except SfInvestigatorError as exc:
+                out["freshness"] = {"checked": False, "reason": exc.message}
+            else:
+                status = {spec: entry for spec, entry in verified["components"].items()}
+                for component in out["components"]:
+                    component["freshness"] = status.get(component["component"], {"status": "not_checked"})
+                refreshed = {n["id"]: n for n in self.knowledge.load(org_id)["notes"]}
+                out["notes"] = [refreshed.get(n["id"], n) for n in out["notes"]]
+                out["freshness"] = {"checked": True, "checked_at": verified["checked_at"], "counts": verified["counts"]}
+        else:
+            out["freshness"] = {"checked": False, "reason": "not requested" if not check else "nothing to check"}
+        out["suggested_retrieve"] = specs[:25]
+        out["how_to_use"] = (
+            "Memory is a lead, not evidence. Use it to decide what to retrieve and read first; then cite the "
+            "file you read today, never the memory. Anything marked changed, stale or not_checked must be "
+            "read again before you rely on it."
+        )
+        if not found["notes"] and not found["components"] and not found["objects"]:
+            out["note"] = (
+                "Nothing remembered for these words. That only means no earlier ticket touched it: "
+                "investigate as usual, and remember what you learn."
+            )
+        return out
+
+    def remember_org_fact(self, org: str, text: str, **kwargs: Any) -> dict[str, Any]:
+        return {"remembered": self.knowledge.add_note(self._org_id(org), org, text, **kwargs)}
+
+    def forget_org_fact(self, org: str, note_id: str) -> dict[str, Any]:
+        return self.knowledge.remove_note(self._org_id(org), note_id)
+
+    def org_map(self, org: str) -> dict[str, Any]:
+        out = self.knowledge.org_map(self._org_id(org))
+        out["org"] = org
+        out["reminder"] = "This is what earlier investigations saw. Run verify_org_knowledge to check it against the org."
+        return out
+
+    def verify_org_knowledge(self, org: str) -> dict[str, Any]:
+        out = self.knowledge.verify(self.cli, org, self._org_id(org))
+        out["org"] = org
+        return out
 
     # -- logs and tests ----------------------------------------------------------------------
 

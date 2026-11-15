@@ -92,6 +92,8 @@ Read-only tools run without a prompt.
 | Orgs and production check | `list_orgs`, `org_info` |
 | Ticket folder, earlier tickets | `init_ticket`, `list_tickets`, `search_tickets` |
 | Ticket text from Jira (optional, off by default, read-only) | `jira_get_ticket` |
+| What is already known about this org | `recall_org_knowledge`, `org_map`, `verify_org_knowledge` |
+| Keep what you learned about the org | `remember_org_fact` (`forget_org_fact` to remove a wrong note) |
 | Get source from the org | `retrieve_components` (`Type:Name`, at most 50 per call) |
 | Read what was retrieved | `list_files`, `search_metadata`, `read_file` |
 | Understand a flow | `summarize_flow` |

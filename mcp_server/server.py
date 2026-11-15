@@ -164,11 +164,99 @@ def jira_get_ticket(ticket_key: str, max_comments: int = 50) -> dict[str, Any]:
 
 
 @tool()
+def recall_org_knowledge(org: str, query: str, check: bool = True, limit: int = 10) -> dict[str, Any]:
+    """What earlier investigations learned about this org, for the words you give: remembered notes,
+    components (with what they query, write and call) and what runs on each object.
+
+    Call it at the start of an investigation with the ticket's key words ("case priority premium
+    import"). By default it double-checks against the org: each remembered component's last-modified
+    date is compared with the org's current one, and anything that changed is flagged, together
+    with the notes about it.
+
+    Memory is a lead, never evidence: read the component again before relying on it, and cite the
+    file you read today.
+
+    Args:
+        org: Org alias or username.
+        query: Words describing what the ticket is about.
+        check: Compare with the org's current state (a few Tooling API queries). Leave it on.
+        limit: Maximum results per kind.
+    """
+    return investigator().recall_org_knowledge(org, query, check=check, limit=limit)
+
+
+@tool()
+def remember_org_fact(
+    org: str,
+    text: str,
+    topics: list[str] | None = None,
+    components: list[str] | None = None,
+    evidence: list[str] | None = None,
+    ticket_key: str = "",
+    supersedes: str = "",
+) -> dict[str, Any]:
+    """Remember one fact about the org for future investigations. Local file only; touches no org.
+
+    Write facts about how the org is built, each backed by something you read: "CaseEscalationService
+    decides case priority from the account's Support_Tier__c; called by CaseTriggerHandler on insert
+    and when the account changes." Not conclusions about one ticket, no record data, no personal
+    data (a note with an email address is refused).
+
+    Args:
+        org: Org alias or username.
+        text: The fact, in one or two sentences.
+        topics: Words someone would search for later, for example ["case priority", "premium"].
+        components: The components the fact is about, as "Type:Name". Used to detect later change.
+        evidence: Where you read it, for example ["metadata/force-app/.../CaseEscalationService.cls:26-33"].
+        ticket_key: The ticket during which this was learned.
+        supersedes: Id of an older note that this one replaces.
+    """
+    return investigator().remember_org_fact(
+        org, text, topics=topics or (), components=components or (), evidence=evidence or (),
+        ticket_key=ticket_key or None, supersedes=supersedes or None,
+    )
+
+
+@tool()
+def forget_org_fact(org: str, note_id: str) -> dict[str, Any]:
+    """Remove a remembered note that turned out to be wrong. Local file only; touches no org.
+
+    Args:
+        org: Org alias or username.
+        note_id: The note's id (N-…), from recall_org_knowledge or org_map.
+    """
+    return investigator().forget_org_fact(org, note_id)
+
+
+@tool()
+def org_map(org: str) -> dict[str, Any]:
+    """Everything remembered about an org: objects and the automation on them, components by type,
+    links between components, topics, notes, and the tickets that contributed.
+
+    Args:
+        org: Org alias or username.
+    """
+    return investigator().org_map(org)
+
+
+@tool()
+def verify_org_knowledge(org: str) -> dict[str, Any]:
+    """Double-check the whole org memory against the org: which remembered components were modified
+    or removed since they were learned, and which notes are stale as a result. Read-only.
+
+    Args:
+        org: Org alias or username.
+    """
+    return investigator().verify_org_knowledge(org)
+
+
+@tool()
 def retrieve_components(org: str, ticket_key: str, components: list[str], wait_minutes: int = 10) -> dict[str, Any]:
     """Retrieve metadata components from the org into tickets/<KEY>/metadata/ and commit them.
 
     Retrieve only what a hypothesis needs. Each retrieve is a git commit, which becomes the
-    baseline that later edits are diffed against.
+    baseline that later edits are diffed against. What was retrieved is also added to the org
+    memory; "org_memory" in the result says what is new and what changed since it was last seen.
 
     Args:
         org: Org alias or username.

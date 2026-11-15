@@ -3,6 +3,8 @@ tickets/*
 !tickets/.gitkeep
 # Local audit database (may contain previous record values).
 audit/
+# Org memory: what was learned about each org. Describes customer orgs: never committed.
+knowledge/
 # Python
 __pycache__/
 *.py[cod]
