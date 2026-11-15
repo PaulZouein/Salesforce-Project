@@ -277,6 +277,15 @@ def _type_of(record: dict[str, Any], records: dict[str, list[dict[str, Any]]]) -
     return None
 
 
+def _sort_key(value: Any) -> tuple[int, float, str]:
+    """Nulls last, numbers by value, everything else as text."""
+    if value is None:
+        return (2, 0.0, "")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (0, float(value), "")
+    return (1, 0.0, str(value))
+
+
 def run_query(query: str, records: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     match = _QUERY_RE.match(query.strip().rstrip(";"))
     if not match:
@@ -286,14 +295,18 @@ def run_query(query: str, records: dict[str, list[dict[str, Any]]]) -> dict[str,
         raise CliError("INVALID_TYPE", f"sObject type '{match.group('object')}' is not supported.", 1)
     rows = list(records[object_name])
     if match.group("where"):
+        unquoted = re.sub(r"'(?:[^'\\]|\\.)*'", "''", match.group("where"))
+        if re.search(r"\b(OR|NOT(?!\s+IN\b))\b", unquoted, flags=re.IGNORECASE) or re.search(r"\(\s*SELECT\b", unquoted, flags=re.IGNORECASE):
+            # Say so instead of returning a wrong answer.
+            raise CliError("MALFORMED_QUERY", "The simulator only supports AND-joined conditions "
+                           "(no OR, NOT or subqueries in WHERE).", 1)
         for condition in _split_and(match.group("where")):
             rows = [r for r in rows if _matches(r, condition, records)]
     if match.group("order"):
         for key in reversed([k.strip() for k in match.group("order").split(",")]):
             tokens = key.split()
             descending = len(tokens) > 1 and tokens[1].upper() == "DESC"
-            rows.sort(key=lambda r, f=tokens[0]: (_resolve(r, f, records) is None, str(_resolve(r, f, records) or "")),
-                      reverse=descending)
+            rows.sort(key=lambda r, f=tokens[0]: _sort_key(_resolve(r, f, records)), reverse=descending)
     select = match.group("select").strip()
     if re.fullmatch(r"COUNT\(\s*\)", select, flags=re.IGNORECASE):
         return {"records": [], "totalSize": len(rows), "done": True}
