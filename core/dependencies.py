@@ -30,6 +30,11 @@ COVERAGE_NOTE = (
 )
 
 
+def _sort_key(entry: dict[str, Any]) -> tuple[str, str]:
+    # Sorted here rather than with ORDER BY: MetadataComponentDependency has restricted query support.
+    return (str(entry.get("type") or ""), str(entry.get("name") or ""))
+
+
 def find_dependencies(
     cli: SfCli,
     org: str,
@@ -66,7 +71,7 @@ def find_dependencies(
                 org,
                 "SELECT MetadataComponentId, MetadataComponentName, MetadataComponentType, "
                 "RefMetadataComponentType FROM MetadataComponentDependency "
-                f"WHERE {where} ORDER BY MetadataComponentType, MetadataComponentName LIMIT {limit}",
+                f"WHERE {where} LIMIT {limit}",
                 tooling=True,
             )
         )
@@ -78,6 +83,7 @@ def find_dependencies(
             }
             for r in rows
         ]
+        out["used_by"].sort(key=_sort_key)
         if len(rows) >= limit:
             out["used_by_truncated"] = True
 
@@ -91,7 +97,7 @@ def find_dependencies(
                 org,
                 "SELECT RefMetadataComponentId, RefMetadataComponentName, RefMetadataComponentType, "
                 "MetadataComponentType FROM MetadataComponentDependency "
-                f"WHERE {where} ORDER BY RefMetadataComponentType, RefMetadataComponentName LIMIT {limit}",
+                f"WHERE {where} LIMIT {limit}",
                 tooling=True,
             )
         )
@@ -103,6 +109,7 @@ def find_dependencies(
             }
             for r in rows
         ]
+        out["uses"].sort(key=_sort_key)
         if len(rows) >= limit:
             out["uses_truncated"] = True
 
