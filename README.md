@@ -63,9 +63,6 @@ tickets/<KEY>/
 You need Python 3.11 or newer, git and Claude Code. The simulated orgs contain a planted bug and a
 ticket about it.
 
-**0. Switch the guard on** if you have not done so yet: `python scripts/generate_settings.py`
-(after step 1, so that the project's Python is active).
-
 **1. Install.** From the project folder:
 
 macOS and Linux:
@@ -83,6 +80,8 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 ```
+
+If the guard is not on yet, switch it on now: `python scripts/generate_settings.py`.
 
 **2. Create the simulated orgs.**
 
