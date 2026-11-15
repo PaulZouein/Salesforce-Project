@@ -11,6 +11,7 @@
       "mcp__sf-investigator__init_ticket",
       "mcp__sf-investigator__list_tickets",
       "mcp__sf-investigator__search_tickets",
+      "mcp__sf-investigator__jira_get_ticket",
       "mcp__sf-investigator__retrieve_components",
       "mcp__sf-investigator__list_files",
       "mcp__sf-investigator__search_metadata",
@@ -31,6 +32,7 @@
       "mcp__sf-investigator__list_changes",
       "mcp__sf-investigator__audit_log",
       "mcp__sf-investigator__write_template",
+      "mcp__sf-investigator__evidence_index",
       "mcp__sf-investigator__validate_report",
       "mcp__sf-investigator__validate_comment",
       "mcp__sf-investigator__export_report_html",
@@ -54,7 +56,38 @@
       "Bash(sfdx:*)",
       "Bash(npx sf:*)",
       "Bash(npx sfdx:*)",
-      "Bash(npx @salesforce/cli:*)"
+      "Bash(npx @salesforce/cli:*)",
+      "Edit(/sfti.config.json)",
+      "Write(/sfti.config.json)",
+      "Edit(/.claude/settings.json)",
+      "Write(/.claude/settings.json)",
+      "Edit(/.claude/hooks/**)",
+      "Write(/.claude/hooks/**)",
+      "Edit(/.mcp.json)",
+      "Write(/.mcp.json)",
+      "Read(/audit/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || exit 0; ${SFTI_PYTHON:-python} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || exit 0; ${SFTI_PYTHON:-python} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
+          }
+        ]
+      }
     ]
   }
 }
