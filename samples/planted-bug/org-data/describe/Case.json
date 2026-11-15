@@ -1,0 +1,329 @@
+{
+  "name": "Case",
+  "label": "Case",
+  "custom": false,
+  "keyPrefix": "500",
+  "queryable": true,
+  "createable": true,
+  "updateable": true,
+  "deletable": true,
+  "fields": [
+    {
+      "name": "Id",
+      "label": "Case ID",
+      "type": "id",
+      "custom": false,
+      "createable": false,
+      "updateable": false,
+      "nillable": false,
+      "defaultedOnCreate": true,
+      "length": 18,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "CaseNumber",
+      "label": "Case Number",
+      "type": "string",
+      "custom": false,
+      "createable": false,
+      "updateable": false,
+      "nillable": false,
+      "defaultedOnCreate": true,
+      "length": 30,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "Subject",
+      "label": "Subject",
+      "type": "string",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": false,
+      "length": 255,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "Priority",
+      "label": "Priority",
+      "type": "picklist",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": true,
+      "length": 255,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": [
+        {
+          "value": "High",
+          "label": "High",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Medium",
+          "label": "Medium",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Low",
+          "label": "Low",
+          "active": true,
+          "defaultValue": false
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "label": "Status",
+      "type": "picklist",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": true,
+      "length": 255,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": [
+        {
+          "value": "New",
+          "label": "New",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Working",
+          "label": "Working",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Escalated",
+          "label": "Escalated",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Closed",
+          "label": "Closed",
+          "active": true,
+          "defaultValue": false
+        }
+      ]
+    },
+    {
+      "name": "Origin",
+      "label": "Case Origin",
+      "type": "picklist",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": false,
+      "length": 255,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": [
+        {
+          "value": "Phone",
+          "label": "Phone",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Email",
+          "label": "Email",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Web",
+          "label": "Web",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Integration",
+          "label": "Integration",
+          "active": true,
+          "defaultValue": false
+        }
+      ]
+    },
+    {
+      "name": "AccountId",
+      "label": "Account ID",
+      "type": "reference",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": false,
+      "length": 18,
+      "referenceTo": [
+        "Account"
+      ],
+      "relationshipName": "Account",
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "SuppliedEmail",
+      "label": "Web Email",
+      "type": "email",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": false,
+      "length": 80,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "IsEscalated",
+      "label": "Escalated",
+      "type": "boolean",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": false,
+      "defaultedOnCreate": true,
+      "length": 0,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "CreatedById",
+      "label": "Created By ID",
+      "type": "reference",
+      "custom": false,
+      "createable": false,
+      "updateable": false,
+      "nillable": false,
+      "defaultedOnCreate": true,
+      "length": 18,
+      "referenceTo": [
+        "User"
+      ],
+      "relationshipName": "CreatedBy",
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "CreatedDate",
+      "label": "Created Date",
+      "type": "datetime",
+      "custom": false,
+      "createable": false,
+      "updateable": false,
+      "nillable": false,
+      "defaultedOnCreate": true,
+      "length": 0,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    }
+  ],
+  "recordTypeInfos": [
+    {
+      "name": "Master",
+      "developerName": "Master",
+      "recordTypeId": "012000000000000AAA",
+      "active": true,
+      "defaultRecordTypeMapping": true,
+      "master": true
+    }
+  ],
+  "childRelationships": [
+    {
+      "childSObject": "CaseComment",
+      "field": "ParentId",
+      "relationshipName": "CaseComments",
+      "cascadeDelete": true
+    },
+    {
+      "childSObject": "CaseHistory",
+      "field": "CaseId",
+      "relationshipName": "Histories",
+      "cascadeDelete": true
+    }
+  ]
+}

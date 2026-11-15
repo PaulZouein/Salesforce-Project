@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "sf-investigator": {
+      "command": "${SFTI_PYTHON:-python}",
+      "args": ["-m", "mcp_server"],
+      "env": {
+        "SFTI_SF_EXECUTABLE": "${SFTI_SF_EXECUTABLE:-}",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "name": "Account",
+  "label": "Account",
+  "custom": false,
+  "keyPrefix": "001",
+  "queryable": true,
+  "createable": true,
+  "updateable": true,
+  "deletable": true,
+  "fields": [
+    {
+      "name": "Id",
+      "label": "Account ID",
+      "type": "id",
+      "custom": false,
+      "createable": false,
+      "updateable": false,
+      "nillable": false,
+      "defaultedOnCreate": true,
+      "length": 18,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "Name",
+      "label": "Account Name",
+      "type": "string",
+      "custom": false,
+      "createable": true,
+      "updateable": true,
+      "nillable": false,
+      "defaultedOnCreate": false,
+      "length": 255,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": []
+    },
+    {
+      "name": "Support_Tier__c",
+      "label": "Support Tier",
+      "type": "picklist",
+      "custom": true,
+      "createable": true,
+      "updateable": true,
+      "nillable": true,
+      "defaultedOnCreate": true,
+      "length": 255,
+      "referenceTo": [],
+      "relationshipName": null,
+      "calculated": false,
+      "calculatedFormula": null,
+      "defaultValue": null,
+      "unique": false,
+      "externalId": false,
+      "controllerName": null,
+      "picklistValues": [
+        {
+          "value": "Standard",
+          "label": "Standard",
+          "active": true,
+          "defaultValue": false
+        },
+        {
+          "value": "Premium",
+          "label": "Premium",
+          "active": true,
+          "defaultValue": false
+        }
+      ]
+    }
+  ],
+  "recordTypeInfos": [
+    {
+      "name": "Master",
+      "developerName": "Master",
+      "recordTypeId": "012000000000000AAA",
+      "active": true,
+      "defaultRecordTypeMapping": true,
+      "master": true
+    }
+  ],
+  "childRelationships": [
+    {
+      "childSObject": "Case",
+      "field": "AccountId",
+      "relationshipName": "Cases",
+      "cascadeDelete": false
+    }
+  ]
+}

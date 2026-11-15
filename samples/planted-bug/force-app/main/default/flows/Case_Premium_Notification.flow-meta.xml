@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <name>Notify_Support_Lead</name>
+        <label>Notify Support Lead</label>
+        <locationX>176</locationX>
+        <locationY>431</locationY>
+        <actionName>customNotificationAction</actionName>
+        <actionType>customNotificationAction</actionType>
+        <inputParameters>
+            <name>title</name>
+            <value>
+                <stringValue>High priority case created</stringValue>
+            </value>
+        </inputParameters>
+        <inputParameters>
+            <name>targetId</name>
+            <value>
+                <elementReference>$Record.Id</elementReference>
+            </value>
+        </inputParameters>
+    </actionCalls>
+    <apiVersion>62.0</apiVersion>
+    <decisions>
+        <name>Is_High_Priority</name>
+        <label>Is High Priority?</label>
+        <locationX>176</locationX>
+        <locationY>311</locationY>
+        <defaultConnectorLabel>Not high priority</defaultConnectorLabel>
+        <rules>
+            <name>High_Priority</name>
+            <conditionLogic>and</conditionLogic>
+            <conditions>
+                <leftValueReference>$Record.Priority</leftValueReference>
+                <operator>EqualTo</operator>
+                <rightValue>
+                    <stringValue>High</stringValue>
+                </rightValue>
+            </conditions>
+            <connector>
+                <targetReference>Notify_Support_Lead</targetReference>
+            </connector>
+            <label>High priority</label>
+        </rules>
+    </decisions>
+    <description>Sends a notification to the support lead when a high priority case is created. Does not change the case.</description>
+    <label>Case Premium Notification</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Is_High_Priority</targetReference>
+        </connector>
+        <object>Case</object>
+        <recordTriggerType>Create</recordTriggerType>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>

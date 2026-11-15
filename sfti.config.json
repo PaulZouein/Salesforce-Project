@@ -1,0 +1,8 @@
+{
+  "_readme": "Edited by you, never by the assistant. Production orgs are read-only whatever is set here.",
+  "mode": "advise",
+  "allow_developer_edition_writes": false,
+  "allow_apex_tests_on_production": false,
+  "default_row_limit": 50,
+  "max_row_limit": 200
+}

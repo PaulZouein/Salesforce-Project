@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledMcpjsonServers": [
+    "sf-investigator"
+  ],
+  "permissions": {
+    "allow": [
+      "mcp__sf-investigator__get_config",
+      "mcp__sf-investigator__list_orgs",
+      "mcp__sf-investigator__org_info",
+      "mcp__sf-investigator__init_ticket",
+      "mcp__sf-investigator__list_tickets",
+      "mcp__sf-investigator__search_tickets",
+      "mcp__sf-investigator__retrieve_components",
+      "mcp__sf-investigator__list_files",
+      "mcp__sf-investigator__search_metadata",
+      "mcp__sf-investigator__read_file",
+      "mcp__sf-investigator__summarize_flow",
+      "mcp__sf-investigator__scan_apex",
+      "mcp__sf-investigator__workspace_diff",
+      "mcp__sf-investigator__soql_query",
+      "mcp__sf-investigator__tooling_query",
+      "mcp__sf-investigator__describe_object",
+      "mcp__sf-investigator__find_dependencies",
+      "mcp__sf-investigator__recent_org_changes",
+      "mcp__sf-investigator__record_history",
+      "mcp__sf-investigator__list_debug_logs",
+      "mcp__sf-investigator__get_debug_log",
+      "mcp__sf-investigator__analyze_debug_log",
+      "mcp__sf-investigator__run_apex_tests",
+      "mcp__sf-investigator__list_changes",
+      "mcp__sf-investigator__audit_log",
+      "mcp__sf-investigator__write_template",
+      "mcp__sf-investigator__validate_report",
+      "mcp__sf-investigator__validate_comment",
+      "mcp__sf-investigator__export_report_html",
+      "Bash(python -m core.prereqs:*)",
+      "Bash(python3 -m core.prereqs:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(python -m simulator:*)",
+      "Bash(python3 -m simulator:*)"
+    ],
+    "ask": [
+      "mcp__sf-investigator__set_trace_flag",
+      "mcp__sf-investigator__execute_anonymous_apex",
+      "mcp__sf-investigator__update_records",
+      "mcp__sf-investigator__deploy_component",
+      "mcp__sf-investigator__rollback_change",
+      "mcp__sf-investigator__run_apex_tests_on_production"
+    ],
+    "deny": [
+      "Bash(sf:*)",
+      "Bash(sfdx:*)",
+      "Bash(npx sf:*)",
+      "Bash(npx sfdx:*)",
+      "Bash(npx @salesforce/cli:*)",
+      "Edit(/sfti.config.json)",
+      "Write(/sfti.config.json)",
+      "Edit(/.claude/settings.json)",
+      "Write(/.claude/settings.json)",
+      "Edit(/.claude/hooks/**)",
+      "Write(/.claude/hooks/**)",
+      "Edit(/.mcp.json)",
+      "Write(/.mcp.json)",
+      "Read(/audit/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${SFTI_PYTHON:-python} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${SFTI_PYTHON:-python} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

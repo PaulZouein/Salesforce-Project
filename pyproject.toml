@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sf-ticket-investigator"
+version = "0.1.0"
+description = "Investigate Salesforce bug tickets with evidence: root cause, smallest fix, verified in a sandbox."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.10"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+sfti-prereqs = "core.prereqs:main"
+sfti-mcp = "mcp_server.server:main"
+
+[tool.setuptools]
+packages = ["core", "mcp_server", "simulator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

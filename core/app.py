@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import apex_tests, dependencies, logs, metadata, query
+from . import apex_scan, apex_tests, dependencies, flow_summary, log_analysis, logs, metadata, query, report, timeline
 from .audit import AuditLog
 from .changes import ChangeManager
 from .config import Settings, load_settings, project_root
@@ -116,6 +116,54 @@ class Investigator:
 
     def run_apex_tests(self, org: str, class_names: Sequence[str], **kwargs: Any) -> dict[str, Any]:
         return apex_tests.run_apex_tests(self.cli, self.guard, org, class_names, workspace=self.workspace, **kwargs)
+
+    def analyze_debug_log(self, ticket_key: str, path: str) -> dict[str, Any]:
+        resolved = self.workspace.resolve(ticket_key, path)
+        out = log_analysis.analyze_log(resolved.read_text(encoding="utf-8", errors="replace"))
+        out["path"] = self.workspace.relative(ticket_key, resolved)
+        return out
+
+    # -- static analysis ---------------------------------------------------------------------
+
+    def summarize_flow(self, ticket_key: str, path: str) -> dict[str, Any]:
+        resolved = self.workspace.resolve(ticket_key, path)
+        out = flow_summary.summarize_flow_file(resolved)
+        out["path"] = self.workspace.relative(ticket_key, resolved)
+        return out
+
+    def scan_apex(self, ticket_key: str, glob: str = "") -> dict[str, Any]:
+        return apex_scan.scan_workspace(self.workspace, ticket_key, glob=glob)
+
+    # -- history -----------------------------------------------------------------------------
+
+    def recent_org_changes(self, org: str, since: str, **kwargs: Any) -> dict[str, Any]:
+        return timeline.recent_org_changes(self.cli, org, since, **kwargs)
+
+    def record_history(self, org: str, sobject: str, record_id: str, **kwargs: Any) -> dict[str, Any]:
+        return timeline.record_history(self.cli, org, sobject, record_id, **kwargs)
+
+    # -- ticket files ------------------------------------------------------------------------
+
+    def init_ticket(self, ticket_key: str) -> dict[str, Any]:
+        return report.init_ticket(self.workspace, ticket_key)
+
+    def write_template(self, ticket_key: str, kind: str, overwrite: bool = False) -> dict[str, Any]:
+        return report.write_template(self.workspace, ticket_key, kind, overwrite=overwrite)
+
+    def validate_report(self, ticket_key: str, filename: str = "report.md") -> dict[str, Any]:
+        return report.validate_report(self.workspace, ticket_key, filename)
+
+    def validate_comment(self, ticket_key: str, filename: str = "comment.md") -> dict[str, Any]:
+        return report.validate_comment(self.workspace, ticket_key, filename)
+
+    def export_report_html(self, ticket_key: str, filename: str = "report.md") -> dict[str, Any]:
+        return report.export_report_html(self.workspace, ticket_key, filename)
+
+    def list_tickets(self) -> dict[str, Any]:
+        return report.list_tickets(self.workspace)
+
+    def search_tickets(self, pattern: str, max_results: int = 60) -> dict[str, Any]:
+        return report.search_tickets(self.workspace, pattern, max_results=max_results)
 
     # -- writes ------------------------------------------------------------------------------
 
