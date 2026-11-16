@@ -339,6 +339,9 @@ def test_sample_is_only_offered_for_the_sample_ticket_on_demo_orgs(web):
 FAKE_CLAUDE = r'''
 import json, os, sys, time
 args = sys.argv[1:]
+if "--version" in args:      # the page asks for this from wherever it runs: answer, and touch nothing
+    print("9.9.9 (Claude Code stand-in)")
+    sys.exit(0)
 record = os.environ["FAKE_CLAUDE_RECORD"]
 prompt = sys.stdin.read()
 open(record, "w", encoding="utf-8").write(json.dumps({"args": args, "prompt": prompt, "cwd": os.getcwd(),

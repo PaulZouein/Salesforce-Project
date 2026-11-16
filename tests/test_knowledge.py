@@ -375,3 +375,137 @@ def test_org_info_says_what_is_remembered(inv):
     remember(inv)
     memory = inv.org_info("prod")["org_memory"]
     assert (memory["components"], memory["notes"]) == (4, 1) and "recall_org_knowledge" in memory["hint"]
+
+
+# --- two programs write the same memory -----------------------------------------------------
+
+
+def test_a_slow_double_check_does_not_undo_what_another_program_learned_meanwhile(inv, sim, project, monkeypatch):
+    """The page checks the memory against the org (seconds) while the investigator saves a note."""
+    import core.knowledge as knowledge_module
+
+    learn(inv)
+    other = OrgKnowledge(project.root)           # the second program, with its own view of the file
+    ask_org = knowledge_module.fetch_last_modified
+
+    def slow_org(cli, org, component_type, names):
+        answer = ask_org(cli, org, component_type, names)
+        if component_type == "ApexClass":        # in the middle of the check, the other program writes
+            other.add_note(PROD_ID, "prod", "Case priority is decided in CaseEscalationService only.",
+                           components=[SERVICE_SPEC])
+        return answer
+
+    monkeypatch.setattr(knowledge_module, "fetch_last_modified", slow_org)
+    checked = inv.verify_org_knowledge("prod")
+    assert checked["counts"] == {"unchanged": 4}
+    data = inv.knowledge.load(PROD_ID)
+    assert [n["text"] for n in data["notes"]] == ["Case priority is decided in CaseEscalationService only."]
+    assert data["components"][SERVICE_SPEC]["last_check"]["status"] == "unchanged"
+
+
+def test_many_writers_at_once_lose_nothing(project):
+    import threading
+
+    stores = [OrgKnowledge(project.root) for _ in range(6)]
+    errors = []
+
+    def write(store, number):
+        try:
+            for i in range(5):
+                store.add_note(PROD_ID, "prod", f"Fact number {number}-{i} about how this org is built.")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(store, n)) for n, store in enumerate(stores)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not errors
+    notes = OrgKnowledge(project.root).load(PROD_ID)["notes"]
+    assert len(notes) == 30 and len({n["text"] for n in notes}) == 30
+    assert not list((project.root / "knowledge").glob("*.lock")) and not list((project.root / "knowledge").glob("*.tmp"))
+
+
+def test_a_lock_left_by_a_crashed_program_is_taken_over_and_a_held_one_is_reported(project, monkeypatch):
+    import os
+    import time
+
+    import core.knowledge as knowledge_module
+    from core.errors import WorkspaceError
+
+    store = OrgKnowledge(project.root)
+    store.add_note(PROD_ID, "prod", "A first fact, so that the folder exists.")
+    lock = project.root / "knowledge" / f"{PROD_ID[:15]}.lock"
+    lock.write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(knowledge_module, "LOCK_WAIT_SECONDS", 0.3)
+    with pytest.raises(WorkspaceError) as busy:          # someone holds it right now
+        store.add_note(PROD_ID, "prod", "A second fact that has to wait its turn.")
+    assert "being updated by another program" in busy.value.message and ".lock" in busy.value.hint
+    assert len(store.load(PROD_ID)["notes"]) == 1 and lock.exists()
+
+    old = time.time() - 3600                             # ... or it was left behind an hour ago
+    os.utime(lock, (old, old))
+    store.add_note(PROD_ID, "prod", "A second fact that has to wait its turn.")
+    assert len(store.load(PROD_ID)["notes"]) == 2 and not lock.exists()
+
+
+def test_a_busy_memory_never_fails_a_read_tool(inv, project, monkeypatch):
+    """Learning is a side effect: a tool that reads from the org still answers when the memory cannot be written."""
+    import core.knowledge as knowledge_module
+
+    learn(inv)
+    monkeypatch.setattr(knowledge_module, "LOCK_WAIT_SECONDS", 0.2)
+    (project.root / "knowledge" / f"{PROD_ID[:15]}.lock").write_text("1", encoding="utf-8")
+    out = inv.describe_object("prod", "Case", include=["automation"])
+    assert out["automation"]["triggers"]
+    again = inv.retrieve_components("prod", "T-9", [SERVICE_SPEC])
+    assert again["files"] and "org_memory" in again
+
+
+# --- earlier tickets ------------------------------------------------------------------------
+
+
+def write_report(inv, key, status, cause):
+    folder = inv.workspace.ticket_dir(key)
+    (folder / "report.md").write_text(
+        f"# Investigation report: {key}\n\n| | |\n|---|---|\n| Ticket | {key} |\n| Root cause status | {status} |\n\n"
+        f"## Ticket summary\n\nSomething was wrong.\n\n## Root cause\n\n{cause}\n\nMore detail follows here.\n\n"
+        "## Fix\n\nNone.\n", encoding="utf-8")
+
+
+def test_recall_brings_back_what_earlier_tickets_on_these_components_concluded(inv):
+    learn(inv, key="T-1")
+    write_report(inv, "T-1", "Confirmed", "**Confirmed.** The service leaves the loop early (E1),\nso later cases are skipped.")
+    inv.retrieve_components("prod", "T-2", [SERVICE_SPEC])
+    inv.remember_org_fact("prod", "Case priority is decided in CaseEscalationService only.", ticket_key="T-2",
+                          components=[SERVICE_SPEC])
+    inv.init_ticket("T-3")
+
+    out = inv.recall_org_knowledge("prod", "case priority escalation", ticket_key="T-3")
+    earlier = {entry["ticket"]: entry for entry in out["earlier_tickets"]}
+    assert list(earlier) == ["T-1", "T-2"]                       # the one sharing most comes first
+    assert earlier["T-1"]["root_cause_status"] == "Confirmed" and earlier["T-1"]["report"] == "tickets/T-1/report.md"
+    assert earlier["T-1"]["root_cause"] == "**Confirmed.** The service leaves the loop early (E1), so later cases are skipped."
+    assert SERVICE_SPEC in earlier["T-1"]["shares"] and earlier["T-1"]["title"] == "Investigation report: T-1"
+    assert earlier["T-2"]["note"] == "Its report is no longer on this computer." and "root_cause" not in earlier["T-2"]
+    assert "a similar symptom can have a different cause" in out["how_to_use"]
+
+    # The ticket being worked on is not its own precedent.
+    mine = inv.recall_org_knowledge("prod", "case priority escalation", ticket_key="T-1")
+    assert [entry["ticket"] for entry in mine["earlier_tickets"]] == ["T-2"]
+    assert inv.recall_org_knowledge("prod", "zebra")["earlier_tickets"] == []
+
+
+def test_report_digest_is_short_and_survives_odd_reports(tmp_path):
+    from core.report import report_digest
+
+    assert report_digest(tmp_path / "missing.md") is None
+    plain = tmp_path / "plain.md"
+    plain.write_text("no headings at all", encoding="utf-8")
+    assert report_digest(plain) == {"title": None, "root_cause_status": None, "root_cause": ""}
+    long = tmp_path / "long.md"
+    long.write_text("# R\n\n## Root cause\n\n| a | b |\n|---|---|\n\n" + "word " * 400 + "\n\n## Fix\n", encoding="utf-8")
+    digest = report_digest(long)
+    assert digest["title"] == "R" and len(digest["root_cause"]) == 501 and digest["root_cause"].endswith("…")

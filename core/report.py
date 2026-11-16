@@ -226,6 +226,38 @@ def _sections(lines: list[str]) -> dict[str, tuple[int, int]]:
     return out
 
 
+def report_digest(path: Path, *, max_chars: int = 500) -> dict[str, Any] | None:
+    """What a finished report concluded, in a few lines: the status and the first paragraph of its root cause.
+
+    Used to remind the investigator of earlier tickets on the same org. ``None`` when there is no report.
+    """
+    try:
+        markdown = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = markdown.splitlines()
+    status = re.search(r"root cause status\s*\|\s*([^|\n]+)", markdown, re.IGNORECASE)
+    title = next((line[2:].strip() for line in lines if line.startswith("# ")), None)
+    span = _find_section(_sections(lines), "Root cause")
+    paragraph: list[str] = []
+    for line in (lines[span[0]:span[1] - 1] if span else []):
+        if not line.strip():
+            if paragraph:
+                break
+            continue
+        if line.lstrip().startswith(("|", "```", ">", "#")):
+            if paragraph:
+                break
+            continue
+        paragraph.append(line.strip())
+    summary = " ".join(paragraph)
+    return {
+        "title": title,
+        "root_cause_status": status.group(1).strip() if status else None,
+        "root_cause": summary[:max_chars] + ("…" if len(summary) > max_chars else ""),
+    }
+
+
 def _find_section(sections: dict[str, tuple[int, int]], name: str) -> tuple[int, int] | None:
     wanted = name.lower()
     for title, span in sections.items():

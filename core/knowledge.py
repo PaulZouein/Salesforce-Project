@@ -30,12 +30,14 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
-from .errors import InputValidationError, SfInvestigatorError
+from .errors import InputValidationError, SfInvestigatorError, WorkspaceError
 from .flow_summary import summarize_flow_xml
 from .query import run_raw_query, soql_literal, strip_attributes
 from .sf_cli import SfCli
@@ -45,6 +47,9 @@ MAX_NOTE_CHARS = 1200
 MAX_NOTES_PER_ORG = 2000
 MAX_TOPICS = 12
 SCHEMA_VERSION = 1
+#: How long a writer waits for another writer, and when a lock left by a crashed process is taken over.
+LOCK_WAIT_SECONDS = 15.0
+LOCK_STALE_SECONDS = 60.0
 
 #: Component types whose last-modified date can be read cheaply through the Tooling API.
 CHECKABLE_TYPES = ("ApexClass", "ApexTrigger", "Flow")
@@ -225,6 +230,51 @@ class OrgKnowledge:
             raise InputValidationError(f"Invalid org Id for the org memory: {org_id!r}.")
         return self.dir / f"{org_id[:15]}.json"
 
+    @contextmanager
+    def _writing(self, org_id: str) -> Iterator[None]:
+        """One writer at a time per org, across processes.
+
+        The MCP server and the web page are separate programs and both write this file. Without
+        this, the one that read first and saved last would undo what the other had learned in
+        between. Every change is therefore: take the lock, read, change, save, release.
+        """
+        lock = self._path(org_id).with_suffix(".lock")
+        self.dir.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        while True:
+            try:
+                handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    abandoned = time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS
+                except OSError:
+                    continue  # released between the two calls
+                if abandoned:  # its writer died before releasing it
+                    try:
+                        lock.unlink()
+                    except OSError:
+                        pass
+                    continue
+                if time.monotonic() > deadline:
+                    raise WorkspaceError(
+                        "The org memory is being updated by another program and did not become free.",
+                        hint="Try again in a moment. If it persists, delete the .lock file in the knowledge folder.",
+                    ) from None
+                time.sleep(0.03)
+            except OSError:
+                break  # a folder that cannot hold a lock file (read-only, odd file system): go on without one
+            else:
+                os.write(handle, str(os.getpid()).encode())
+                os.close(handle)
+                break
+        try:
+            yield
+        finally:
+            try:
+                lock.unlink()
+            except OSError:
+                pass
+
     def load(self, org_id: str) -> dict[str, Any]:
         path = self._path(org_id)
         empty: dict[str, Any] = {
@@ -293,68 +343,69 @@ class OrgKnowledge:
         last_modified: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Remember retrieved components. Returns what was new and what changed since last seen."""
-        data = self.load(org_id)
-        self._touch_alias(data, alias)
-        now = utc_now()
-        last_modified = last_modified or {}
-        by_spec: dict[str, list[dict[str, Any]]] = {}
-        for entry in files:
-            if entry.get("state") == "Failed" or not entry.get("path") or not entry.get("type") or not entry.get("name"):
-                continue
-            by_spec.setdefault(spec_of(entry["type"], entry["name"]), []).append(entry)
-
-        new, changed, unchanged = [], [], []
-        for spec, entries in sorted(by_spec.items()):
-            digest = hashlib.sha256()
-            outline = None
-            main_path = None
-            for entry in sorted(entries, key=lambda e: str(e["path"])):
-                path = Path(repo_path) / str(entry["path"])
-                try:
-                    content = path.read_bytes()
-                except OSError:
+        with self._writing(org_id):
+            data = self.load(org_id)
+            self._touch_alias(data, alias)
+            now = utc_now()
+            last_modified = last_modified or {}
+            by_spec: dict[str, list[dict[str, Any]]] = {}
+            for entry in files:
+                if entry.get("state") == "Failed" or not entry.get("path") or not entry.get("type") or not entry.get("name"):
                     continue
-                digest.update(str(entry["path"]).encode())
-                digest.update(b"\0")
-                digest.update(content)
-                found = outline_file(path)
-                if found is not None:
-                    outline, main_path = found, str(entry["path"])
-                elif main_path is None:
-                    main_path = str(entry["path"])
-            fingerprint = digest.hexdigest()
-            previous = data["components"].get(spec)
-            previous_tickets = list((previous or {}).get("seen_in_tickets", []))
-            component: dict[str, Any] = dict(previous or {})
-            component["seen_in_tickets"] = list(previous_tickets)
-            component.update({
-                "type": spec.split(":", 1)[0], "name": spec.split(":", 1)[1],
-                "path": f"metadata/{main_path}" if main_path else None,
-                "sha256": fingerprint, "last_seen": now, "last_verified": now,
-            })
-            component.setdefault("first_seen", now)
-            if outline is not None:
-                component["outline"] = outline
-            if spec in last_modified:
-                component["org_last_modified"] = last_modified[spec]
-            tickets = component.setdefault("seen_in_tickets", [])
-            if ticket_key and ticket_key not in tickets:
-                tickets.append(ticket_key)
-            if previous is None:
-                new.append(spec)
-            elif previous.get("sha256") != fingerprint:
-                component.setdefault("history", []).append(
-                    {"at": now, "before": previous.get("sha256"), "after": fingerprint, "ticket_key": ticket_key})
-                component["history"] = component["history"][-20:]
-                changed.append({"component": spec, "last_seen": previous.get("last_seen"),
-                                "seen_in_tickets": previous_tickets})
-            else:
-                unchanged.append(spec)
-            data["components"][spec] = component
-            self._link_from_outline(data, spec, outline)
+                by_spec.setdefault(spec_of(entry["type"], entry["name"]), []).append(entry)
 
-        stale_notes = self._refresh_note_staleness(data)
-        self.save(data)
+            new, changed, unchanged = [], [], []
+            for spec, entries in sorted(by_spec.items()):
+                digest = hashlib.sha256()
+                outline = None
+                main_path = None
+                for entry in sorted(entries, key=lambda e: str(e["path"])):
+                    path = Path(repo_path) / str(entry["path"])
+                    try:
+                        content = path.read_bytes()
+                    except OSError:
+                        continue
+                    digest.update(str(entry["path"]).encode())
+                    digest.update(b"\0")
+                    digest.update(content)
+                    found = outline_file(path)
+                    if found is not None:
+                        outline, main_path = found, str(entry["path"])
+                    elif main_path is None:
+                        main_path = str(entry["path"])
+                fingerprint = digest.hexdigest()
+                previous = data["components"].get(spec)
+                previous_tickets = list((previous or {}).get("seen_in_tickets", []))
+                component: dict[str, Any] = dict(previous or {})
+                component["seen_in_tickets"] = list(previous_tickets)
+                component.update({
+                    "type": spec.split(":", 1)[0], "name": spec.split(":", 1)[1],
+                    "path": f"metadata/{main_path}" if main_path else None,
+                    "sha256": fingerprint, "last_seen": now, "last_verified": now,
+                })
+                component.setdefault("first_seen", now)
+                if outline is not None:
+                    component["outline"] = outline
+                if spec in last_modified:
+                    component["org_last_modified"] = last_modified[spec]
+                tickets = component.setdefault("seen_in_tickets", [])
+                if ticket_key and ticket_key not in tickets:
+                    tickets.append(ticket_key)
+                if previous is None:
+                    new.append(spec)
+                elif previous.get("sha256") != fingerprint:
+                    component.setdefault("history", []).append(
+                        {"at": now, "before": previous.get("sha256"), "after": fingerprint, "ticket_key": ticket_key})
+                    component["history"] = component["history"][-20:]
+                    changed.append({"component": spec, "last_seen": previous.get("last_seen"),
+                                    "seen_in_tickets": previous_tickets})
+                else:
+                    unchanged.append(spec)
+                data["components"][spec] = component
+                self._link_from_outline(data, spec, outline)
+
+            stale_notes = self._refresh_note_staleness(data)
+            self.save(data)
         out: dict[str, Any] = {"new": new, "changed_since_last_seen": changed, "unchanged": len(unchanged)}
         if changed:
             affected = [n["id"] for n in data["notes"] if n.get("stale") and
@@ -397,46 +448,48 @@ class OrgKnowledge:
 
     def record_automation(self, org_id: str, alias: str | None, sobject: str, automation: dict[str, Any]) -> None:
         """Remember which triggers, flows and rules run on an object (from ``describe_object``)."""
-        data = self.load(org_id)
-        self._touch_alias(data, alias)
-        entry = data["objects"].setdefault(sobject, {})
+        with self._writing(org_id):
+            data = self.load(org_id)
+            self._touch_alias(data, alias)
+            entry = data["objects"].setdefault(sobject, {})
 
-        def names(key: str, field: str) -> list[str] | None:
-            rows = automation.get(key)
-            if not isinstance(rows, list):
-                return None  # that section failed: keep what was known
-            return sorted({str(r.get(field)) for r in rows if isinstance(r, dict) and r.get(field)})
+            def names(key: str, field: str) -> list[str] | None:
+                rows = automation.get(key)
+                if not isinstance(rows, list):
+                    return None  # that section failed: keep what was known
+                return sorted({str(r.get(field)) for r in rows if isinstance(r, dict) and r.get(field)})
 
-        for bucket, key, field in (("triggers", "triggers", "Name"), ("flows", "record_triggered_flows", "ApiName"),
-                                   ("validation_rules", "validation_rules", "ValidationName"),
-                                   ("workflow_rules", "workflow_rules", "Name")):
-            found = names(key, field)
-            if found is not None:
-                entry[bucket] = found
-        entry["automation_checked_at"] = utc_now()
-        self.save(data)
+            for bucket, key, field in (("triggers", "triggers", "Name"), ("flows", "record_triggered_flows", "ApiName"),
+                                       ("validation_rules", "validation_rules", "ValidationName"),
+                                       ("workflow_rules", "workflow_rules", "Name")):
+                found = names(key, field)
+                if found is not None:
+                    entry[bucket] = found
+            entry["automation_checked_at"] = utc_now()
+            self.save(data)
 
     def record_dependencies(self, org_id: str, alias: str | None, name: str, component_type: str | None,
                             result: dict[str, Any]) -> None:
         """Remember "uses" links reported by the dependency API."""
-        data = self.load(org_id)
-        self._touch_alias(data, alias)
-        subject_type = component_type
-        if not subject_type:
-            subject_type = next((c["type"] for c in data["components"].values() if c.get("name") == name), None)
-        if not subject_type:
-            return
-        subject = spec_of(subject_type, name)
-        if "uses" in result:
-            self._replace_edges(data, subject, "uses", "dependency_api",
-                                [spec_of(d.get("type"), d.get("name")) for d in result["uses"] if d.get("name")])
-        for user in result.get("used_by", []):
-            if user.get("name") and user.get("type"):
-                source = spec_of(user["type"], user["name"])
-                edge = {"from": source, "to": subject, "kind": "uses", "origin": "dependency_api"}
-                if edge not in data["edges"]:
-                    data["edges"].append(edge)
-        self.save(data)
+        with self._writing(org_id):
+            data = self.load(org_id)
+            self._touch_alias(data, alias)
+            subject_type = component_type
+            if not subject_type:
+                subject_type = next((c["type"] for c in data["components"].values() if c.get("name") == name), None)
+            if not subject_type:
+                return
+            subject = spec_of(subject_type, name)
+            if "uses" in result:
+                self._replace_edges(data, subject, "uses", "dependency_api",
+                                    [spec_of(d.get("type"), d.get("name")) for d in result["uses"] if d.get("name")])
+            for user in result.get("used_by", []):
+                if user.get("name") and user.get("type"):
+                    source = spec_of(user["type"], user["name"])
+                    edge = {"from": source, "to": subject, "kind": "uses", "origin": "dependency_api"}
+                    if edge not in data["edges"]:
+                        data["edges"].append(edge)
+            self.save(data)
 
     # -- notes -------------------------------------------------------------------------------
 
@@ -478,33 +531,34 @@ class OrgKnowledge:
                 specs.append(spec)
         clean_evidence = [str(e).strip("` ")[:300] for e in (evidence or ()) if str(e).strip("` ")][:20]
 
-        data = self.load(org_id)
-        self._touch_alias(data, alias)
-        if len(data["notes"]) >= MAX_NOTES_PER_ORG:
-            raise InputValidationError("The org memory is full. Remove notes that no longer hold first.")
-        if supersedes:
-            old = next((n for n in data["notes"] if n.get("id") == supersedes), None)
-            if old is None:
-                raise InputValidationError(f"No note with id {supersedes!r} for this org.")
-            old["superseded_by"] = "pending"
-        note = {
-            "id": "N-" + uuid.uuid4().hex[:8],
-            "text": text,
-            "topics": clean_topics,
-            "components": specs,
-            "evidence": clean_evidence,
-            "ticket_key": ticket_key,
-            "created_at": utc_now(),
-            # What each component looked like when this was learned, to detect later change.
-            "fingerprints": {s: data["components"].get(s, {}).get("sha256") for s in specs},
-            "stale": False,
-        }
-        if supersedes:
-            for old in data["notes"]:
-                if old.get("superseded_by") == "pending":
-                    old["superseded_by"] = note["id"]
-        data["notes"].append(note)
-        self.save(data)
+        with self._writing(org_id):
+            data = self.load(org_id)
+            self._touch_alias(data, alias)
+            if len(data["notes"]) >= MAX_NOTES_PER_ORG:
+                raise InputValidationError("The org memory is full. Remove notes that no longer hold first.")
+            if supersedes:
+                old = next((n for n in data["notes"] if n.get("id") == supersedes), None)
+                if old is None:
+                    raise InputValidationError(f"No note with id {supersedes!r} for this org.")
+                old["superseded_by"] = "pending"
+            note = {
+                "id": "N-" + uuid.uuid4().hex[:8],
+                "text": text,
+                "topics": clean_topics,
+                "components": specs,
+                "evidence": clean_evidence,
+                "ticket_key": ticket_key,
+                "created_at": utc_now(),
+                # What each component looked like when this was learned, to detect later change.
+                "fingerprints": {s: data["components"].get(s, {}).get("sha256") for s in specs},
+                "stale": False,
+            }
+            if supersedes:
+                for old in data["notes"]:
+                    if old.get("superseded_by") == "pending":
+                        old["superseded_by"] = note["id"]
+            data["notes"].append(note)
+            self.save(data)
         unknown = [s for s in specs if s not in data["components"]]
         out = dict(note)
         if unknown:
@@ -514,12 +568,13 @@ class OrgKnowledge:
         return out
 
     def remove_note(self, org_id: str, note_id: str) -> dict[str, Any]:
-        data = self.load(org_id)
-        before = len(data["notes"])
-        data["notes"] = [n for n in data["notes"] if n.get("id") != note_id]
-        if len(data["notes"]) == before:
-            raise InputValidationError(f"No note with id {note_id!r} for this org.")
-        self.save(data)
+        with self._writing(org_id):
+            data = self.load(org_id)
+            before = len(data["notes"])
+            data["notes"] = [n for n in data["notes"] if n.get("id") != note_id]
+            if len(data["notes"]) == before:
+                raise InputValidationError(f"No note with id {note_id!r} for this org.")
+            self.save(data)
         return {"removed": note_id, "notes_left": len(data["notes"])}
 
     @staticmethod
@@ -551,11 +606,11 @@ class OrgKnowledge:
         Compares the last-modified date stored when a component was last retrieved with the
         org's current one. Read-only: a few Tooling API queries.
         """
-        data = self.load(org_id)
-        wanted = [s for s in (components or sorted(data["components"])) if s in data["components"]]
+        known = self.load(org_id)["components"]
+        asked = [s for s in (components or sorted(known)) if s in known]
         results: dict[str, dict[str, Any]] = {}
         by_type: dict[str, list[str]] = {}
-        for spec in wanted:
+        for spec in asked:
             by_type.setdefault(spec.split(":", 1)[0], []).append(spec.split(":", 1)[1])
         current: dict[str, str | None] = {}
         errors: dict[str, str] = {}
@@ -567,8 +622,24 @@ class OrgKnowledge:
             except SfInvestigatorError as exc:
                 errors[component_type] = exc.message
 
+        # The org was asked without holding the lock (it takes seconds). The file is read again
+        # now, so that what another program learned in the meantime is kept.
         now = utc_now()
         changed_specs: list[str] = []
+        with self._writing(org_id):
+            data = self.load(org_id)
+            wanted = [s for s in asked if s in data["components"]]
+            stale_notes = self._apply_check(data, wanted, current, errors, now, results, changed_specs)
+            self.save(data)
+        counts: dict[str, int] = {}
+        for entry in results.values():
+            counts[entry["status"]] = counts.get(entry["status"], 0) + 1
+        return {"checked_at": now, "counts": counts, "components": results, "stale_notes": stale_notes}
+
+    def _apply_check(self, data: dict[str, Any], wanted: Sequence[str], current: dict[str, str | None],
+                     errors: dict[str, str], now: str, results: dict[str, dict[str, Any]],
+                     changed_specs: list[str]) -> list[str]:
+        """Write the outcome of a check into ``data``; returns the notes it flags."""
         for spec in wanted:
             component = data["components"][spec]
             component_type = spec.split(":", 1)[0]
@@ -594,12 +665,7 @@ class OrgKnowledge:
             component["last_check"] = {"at": now, "status": entry["status"]}
             results[spec] = entry
 
-        stale_notes = self._refresh_note_staleness(data, changed_specs)
-        self.save(data)
-        counts: dict[str, int] = {}
-        for entry in results.values():
-            counts[entry["status"]] = counts.get(entry["status"], 0) + 1
-        return {"checked_at": now, "counts": counts, "components": results, "stale_notes": stale_notes}
+        return self._refresh_note_staleness(data, changed_specs)
 
     # -- recall ------------------------------------------------------------------------------
 

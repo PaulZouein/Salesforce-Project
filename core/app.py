@@ -199,10 +199,39 @@ class Investigator:
             org_id, org, self.workspace.metadata_dir(ticket_key), files, ticket_key=ticket_key,
             last_modified=last_modified)
 
-    def recall_org_knowledge(self, org: str, query_text: str, *, check: bool = True, limit: int = 10) -> dict[str, Any]:
+    MAX_EARLIER_TICKETS = 5
+
+    def _earlier_tickets(self, found: dict[str, Any], current: str | None) -> list[dict[str, Any]]:
+        """Earlier tickets on this org that touched what was just recalled, with what each concluded."""
+        shared: dict[str, list[str]] = {}
+        for component in found["components"]:
+            for key in component.get("seen_in_tickets") or []:
+                shared.setdefault(key, []).append(component["component"])
+        for note in found["notes"]:
+            if note.get("ticket_key"):
+                shared.setdefault(note["ticket_key"], [])
+        shared.pop(current or "", None)
+        ranked = sorted(shared, key=lambda key: (-len(shared[key]), key))[:self.MAX_EARLIER_TICKETS]
+        out = []
+        for key in ranked:
+            entry: dict[str, Any] = {"ticket": key, "shares": shared[key][:8]}
+            try:
+                digest = report.report_digest(self.workspace.ticket_dir(key) / "report.md")
+            except SfInvestigatorError:
+                digest = None
+            if digest:
+                entry.update(digest, report=f"tickets/{key}/report.md")
+            else:
+                entry["note"] = "Its report is no longer on this computer."
+            out.append(entry)
+        return out
+
+    def recall_org_knowledge(self, org: str, query_text: str, *, check: bool = True, limit: int = 10,
+                             ticket_key: str | None = None) -> dict[str, Any]:
         """What is remembered about this org for the given words, double-checked against the org."""
         org_id = self._org_id(org)
         found = self.knowledge.search(org_id, query_text, limit=limit)
+        found["earlier_tickets"] = self._earlier_tickets(found, ticket_key)
         specs = [c["component"] for c in found["components"]]
         for note in found["notes"]:
             specs.extend(note.get("components", []))
@@ -226,7 +255,8 @@ class Investigator:
         out["how_to_use"] = (
             "Memory is a lead, not evidence. Use it to decide what to retrieve and read first; then cite the "
             "file you read today, never the memory. Anything marked changed, stale or not_checked must be "
-            "read again before you rely on it."
+            "read again before you rely on it. earlier_tickets says what was concluded then: the org may "
+            "have changed since, and a similar symptom can have a different cause."
         )
         if not found["notes"] and not found["components"] and not found["objects"]:
             out["note"] = (

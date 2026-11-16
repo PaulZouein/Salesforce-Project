@@ -94,6 +94,30 @@ class Project:
         return self.root / "tickets" / key
 
 
+def _private_folders_snapshot() -> dict[str, tuple[int, int]]:
+    seen: dict[str, tuple[int, int]] = {}
+    for name in ("tickets", "knowledge", "audit"):
+        folder = ROOT / name
+        if folder.is_dir():
+            for path in folder.rglob("*"):
+                if path.is_file():
+                    info = path.stat()
+                    seen[path.relative_to(ROOT).as_posix()] = (info.st_mtime_ns, info.st_size)
+    return seen
+
+
+@pytest.fixture(scope="session", autouse=True)
+def tests_never_touch_real_tickets_or_org_memory():
+    """Every test works in a temporary folder. The tickets, org memory and audit data in this checkout belong
+    to whoever runs the suite, and running it must leave them exactly as they were."""
+    before = _private_folders_snapshot()
+    yield
+    after = _private_folders_snapshot()
+    changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
+    assert not changed, ("The test run changed files in tickets/, knowledge/ or audit/ of this checkout "
+                         f"(unless you were using the investigator at the same time): {changed[:10]}")
+
+
 @pytest.fixture
 def sim(tmp_path: Path) -> Sim:
     state = tmp_path / "sim-state"

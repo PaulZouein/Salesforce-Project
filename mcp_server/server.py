@@ -164,9 +164,10 @@ def jira_get_ticket(ticket_key: str, max_comments: int = 50) -> dict[str, Any]:
 
 
 @tool()
-def recall_org_knowledge(org: str, query: str, check: bool = True, limit: int = 10) -> dict[str, Any]:
+def recall_org_knowledge(org: str, query: str, check: bool = True, limit: int = 10, ticket_key: str = "") -> dict[str, Any]:
     """What earlier investigations learned about this org, for the words you give: remembered notes,
-    components (with what they query, write and call) and what runs on each object.
+    components (with what they query, write and call), what runs on each object, and the earlier
+    tickets that touched the same components with what each concluded.
 
     Call it at the start of an investigation with the ticket's key words ("case priority premium
     import"). By default it double-checks against the org: each remembered component's last-modified
@@ -181,8 +182,9 @@ def recall_org_knowledge(org: str, query: str, check: bool = True, limit: int = 
         query: Words describing what the ticket is about.
         check: Compare with the org's current state (a few Tooling API queries). Leave it on.
         limit: Maximum results per kind.
+        ticket_key: The ticket you are working on, so that it is left out of the earlier tickets.
     """
-    return investigator().recall_org_knowledge(org, query, check=check, limit=limit)
+    return investigator().recall_org_knowledge(org, query, check=check, limit=limit, ticket_key=ticket_key or None)
 
 
 @tool()
