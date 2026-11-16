@@ -431,6 +431,8 @@ def describe_object(
     fields: list[str] | None = None,
     field_filter: str = "",
     include: list[str] | None = None,
+    ticket_key: str = "",
+    save_as: str = "",
 ) -> dict[str, Any]:
     """Describe an object: fields, record types, child relationships, and the automation that runs on it.
 
@@ -442,15 +444,26 @@ def describe_object(
         include: Any of "fields", "record_types", "child_relationships", "automation".
             "automation" lists triggers, record-triggered flows, validation rules and workflow
             rules on the object. Default: ["fields", "record_types"].
+        ticket_key: Save the answer under tickets/<KEY>/queries/ so the report can cite it
+            (for example to show that no validation rule exists on the object).
+        save_as: Short name for the saved file.
     """
     return investigator().describe_object(
         org, object_name, fields=fields, field_filter=field_filter or None,
-        include=include or ("fields", "record_types"),
+        include=include or ("fields", "record_types"), ticket_key=ticket_key or None, save_as=save_as or None,
     )
 
 
 @tool()
-def find_dependencies(org: str, name: str, component_type: str = "", direction: str = "both", limit: int = 200) -> dict[str, Any]:
+def find_dependencies(
+    org: str,
+    name: str,
+    component_type: str = "",
+    direction: str = "both",
+    limit: int = 200,
+    ticket_key: str = "",
+    save_as: str = "",
+) -> dict[str, Any]:
     """What uses this component, and what does it use (Tooling API MetadataComponentDependency).
 
     An empty answer means "none recorded", not "none exist": confirm with search_metadata.
@@ -462,14 +475,25 @@ def find_dependencies(org: str, name: str, component_type: str = "", direction: 
         component_type: Optional type filter such as "ApexClass", "ApexTrigger", "Flow", "CustomField".
         direction: "used_by", "uses" or "both".
         limit: Maximum rows per direction (up to 500).
+        ticket_key: Save the answer under tickets/<KEY>/queries/ so the report can cite it.
+        save_as: Short name for the saved file.
     """
     return investigator().find_dependencies(
-        org, name, component_type=component_type or None, direction=direction, limit=limit
+        org, name, component_type=component_type or None, direction=direction, limit=limit,
+        ticket_key=ticket_key or None, save_as=save_as or None,
     )
 
 
 @tool()
-def recent_org_changes(org: str, since: str, until: str = "", contains: str = "", limit: int = 100) -> dict[str, Any]:
+def recent_org_changes(
+    org: str,
+    since: str,
+    until: str = "",
+    contains: str = "",
+    limit: int = 100,
+    ticket_key: str = "",
+    save_as: str = "",
+) -> dict[str, Any]:
     """What changed in the org in a time window: setup audit trail plus modified Apex classes,
     triggers, flow versions and validation rules. Use it to compare with when the problem started.
 
@@ -479,12 +503,25 @@ def recent_org_changes(org: str, since: str, until: str = "", contains: str = ""
         until: End of the window; empty means now.
         contains: Keep only entries mentioning this text (for example an object or class name).
         limit: Maximum rows per source (up to 200).
+        ticket_key: Save the answer under tickets/<KEY>/queries/ so the report can cite it
+            (for example the date a class was last modified).
+        save_as: Short name for the saved file.
     """
-    return investigator().recent_org_changes(org, since, until=until or None, contains=contains or None, limit=limit)
+    return investigator().recent_org_changes(
+        org, since, until=until or None, contains=contains or None, limit=limit,
+        ticket_key=ticket_key or None, save_as=save_as or None,
+    )
 
 
 @tool()
-def record_history(org: str, object_name: str, record_id: str, limit: int = 100) -> dict[str, Any]:
+def record_history(
+    org: str,
+    object_name: str,
+    record_id: str,
+    limit: int = 100,
+    ticket_key: str = "",
+    save_as: str = "",
+) -> dict[str, Any]:
     """Field history of one record (who changed which field and when), newest first.
 
     Needs field history tracking on the object. Users are returned as Ids.
@@ -494,8 +531,12 @@ def record_history(org: str, object_name: str, record_id: str, limit: int = 100)
         object_name: Object API name, for example "Case".
         record_id: The record Id.
         limit: Maximum rows (up to 200).
+        ticket_key: Save the answer under tickets/<KEY>/queries/ so the report can cite it.
+        save_as: Short name for the saved file.
     """
-    return investigator().record_history(org, object_name, record_id, limit=limit)
+    return investigator().record_history(
+        org, object_name, record_id, limit=limit, ticket_key=ticket_key or None, save_as=save_as or None,
+    )
 
 
 @tool()

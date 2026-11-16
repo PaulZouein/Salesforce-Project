@@ -7,7 +7,9 @@ its methods. Each method returns plain JSON-serializable data and raises
 
 from __future__ import annotations
 
+import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -19,7 +21,7 @@ from .errors import SfInvestigatorError
 from .knowledge import OrgKnowledge, fetch_last_modified
 from .org_guard import OrgGuard
 from .sf_cli import SfCli
-from .workspace import Workspace
+from .workspace import Workspace, slugify
 
 
 class Investigator:
@@ -119,18 +121,41 @@ class Investigator:
         return query.run_query(self.cli, org, query_text, tooling=tooling, workspace=self.workspace,
                                settings=self.settings(), **kwargs)
 
-    def describe_object(self, org: str, sobject: str, **kwargs: Any) -> dict[str, Any]:
+    def _keep_as_evidence(self, out: dict[str, Any], *, tool: str, org: str, asked: dict[str, Any],
+                          ticket_key: str | None, save_as: str | None, default_name: str) -> dict[str, Any]:
+        """Save a tool's answer under ``tickets/<KEY>/queries/`` so that a report can cite it.
+
+        Without this, what these tools return exists only in the conversation and a report can
+        only say "seen, no saved artifact". The answers hold metadata and Ids; the tools that
+        return record values have already redacted them.
+        """
+        if not ticket_key:
+            return out
+        now = datetime.now(timezone.utc)
+        name = f"{now.strftime('%Y%m%d-%H%M%S')}-{slugify(save_as or default_name, 'result')}.json"
+        path = self.workspace.subdir(ticket_key, "queries") / name
+        path.write_text(json.dumps({
+            "tool": tool, "org": org, "asked": {k: v for k, v in asked.items() if v not in (None, "", [], ())},
+            "executed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "result": out,
+        }, indent=2, default=str), encoding="utf-8")
+        return {**out, "saved_to": self.workspace.relative(ticket_key, path)}
+
+    def describe_object(self, org: str, sobject: str, *, ticket_key: str | None = None, save_as: str | None = None,
+                        **kwargs: Any) -> dict[str, Any]:
         out = query.describe_object(self.cli, org, sobject, **kwargs)
         if isinstance(out.get("automation"), dict):
             self._remember(lambda org_id: self.knowledge.record_automation(org_id, org, sobject, out["automation"]),
                            org=org)
-        return out
+        return self._keep_as_evidence(out, tool="describe_object", org=org, asked={"object": sobject, **kwargs},
+                                      ticket_key=ticket_key, save_as=save_as, default_name=f"describe-{sobject}")
 
-    def find_dependencies(self, org: str, name: str, **kwargs: Any) -> dict[str, Any]:
+    def find_dependencies(self, org: str, name: str, *, ticket_key: str | None = None, save_as: str | None = None,
+                          **kwargs: Any) -> dict[str, Any]:
         out = dependencies.find_dependencies(self.cli, org, name, **kwargs)
         self._remember(lambda org_id: self.knowledge.record_dependencies(
             org_id, org, name, kwargs.get("component_type"), out), org=org)
-        return out
+        return self._keep_as_evidence(out, tool="find_dependencies", org=org, asked={"name": name, **kwargs},
+                                      ticket_key=ticket_key, save_as=save_as, default_name=f"dependencies-{name}")
 
     # -- org memory --------------------------------------------------------------------------
     #
@@ -257,11 +282,18 @@ class Investigator:
 
     # -- history -----------------------------------------------------------------------------
 
-    def recent_org_changes(self, org: str, since: str, **kwargs: Any) -> dict[str, Any]:
-        return timeline.recent_org_changes(self.cli, org, since, **kwargs)
+    def recent_org_changes(self, org: str, since: str, *, ticket_key: str | None = None, save_as: str | None = None,
+                           **kwargs: Any) -> dict[str, Any]:
+        out = timeline.recent_org_changes(self.cli, org, since, **kwargs)
+        return self._keep_as_evidence(out, tool="recent_org_changes", org=org, asked={"since": since, **kwargs},
+                                      ticket_key=ticket_key, save_as=save_as, default_name="org-changes")
 
-    def record_history(self, org: str, sobject: str, record_id: str, **kwargs: Any) -> dict[str, Any]:
-        return timeline.record_history(self.cli, org, sobject, record_id, **kwargs)
+    def record_history(self, org: str, sobject: str, record_id: str, *, ticket_key: str | None = None,
+                       save_as: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        out = timeline.record_history(self.cli, org, sobject, record_id, **kwargs)
+        return self._keep_as_evidence(out, tool="record_history", org=org,
+                                      asked={"object": sobject, "record_id": record_id, **kwargs},
+                                      ticket_key=ticket_key, save_as=save_as, default_name=f"history-{record_id}")
 
     # -- ticket files ------------------------------------------------------------------------
 

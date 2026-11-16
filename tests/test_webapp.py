@@ -6,6 +6,8 @@ replaced by a small stand-in program that speaks the same ``stream-json`` protoc
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import re
@@ -15,6 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -204,8 +207,10 @@ def test_submit_a_ticket(web, project):
     assert (folder / "attachments" / "ticket-original.txt").read_text(encoding="utf-8") == TICKET_TEXT
     prompt = made["prompt"]
     assert "tickets/DEMO-101/attachments/ticket-original.txt" in prompt and "demo-prod" in prompt
-    assert "unattended" in prompt and "advise mode" in prompt and "will be refused" in prompt
+    assert "unattended" in prompt and "advise mode" in prompt and "not available here" in prompt
     assert "recall_org_knowledge" in prompt and "remember_org_fact" in prompt and "validate_report" in prompt
+    assert ".claude/skills/<name>/SKILL.md" in prompt and "follow-up-NN.txt" in prompt
+    assert "already been worked on" not in prompt
 
     _, detail = web.get("/api/tickets/DEMO-101")
     assert detail["stage"] == "new" and detail["title"] == "Premium customer cases are not set to High priority"
@@ -345,12 +350,12 @@ if mode == "untrusted":
     sys.stderr.write("Ignoring 37 permissions.allow entries from .claude/settings.json: this workspace "
                      "has not been trusted. Run Claude Code interactively here once.\n")
     sys.stderr.flush()
-    time.sleep(120)
 if mode == "no-mcp":
     out({"type": "system", "subtype": "init", "mcp_servers": [{"name": "sf-investigator", "status": "failed"}], "tools": []})
     out({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "no tools"})
     sys.exit(1)
 out({"type": "system", "subtype": "init", "mcp_servers": [{"name": "sf-investigator", "status": "connected"}],
+     "model": os.environ.get("FAKE_CLAUDE_MODEL"),
      "tools": ["Read", "mcp__sf-investigator__soql_query", "mcp__sf-investigator__org_info"]})
 print("this line is not JSON and must be ignored")
 out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading the ticket."},
@@ -364,6 +369,12 @@ if mode == "hang":
     time.sleep(120)
 if mode == "crash":
     sys.stderr.write("boom: something broke\n"); sys.exit(3)
+if mode == "flood":
+    for i in range(int(os.environ["FAKE_CLAUDE_FLOOD"])):
+        out({"type": "assistant", "message": {"content": [{"type": "text", "text": "note %d" % i}]}})
+if mode != "no-report":
+    with open(os.path.join("tickets", "DEMO-101", "report.md"), "w", encoding="utf-8") as handle:
+        handle.write("# Investigation report: DEMO-101\n\n## Root cause\n\n**Not confirmed.** Stand-in report.\n")
 out({"type": "result", "subtype": "success", "is_error": False, "result": "Root cause confirmed.", "num_turns": 12,
      "duration_ms": 183000, "total_cost_usd": 1.23})
 '''
@@ -393,15 +404,25 @@ def test_agent_run_starts_claude_code_unattended_and_reports_progress(web, fake_
     detail = web.wait_until_finished("DEMO-101")
     assert detail["run"]["status"] == "finished" and detail["run"]["runner"] == "agent"
 
+    from mcp_server import server
     call = json.loads(fake_claude.read_text(encoding="utf-8"))
-    assert call["args"] == ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+    args = call["args"]
+    assert args[:6] == ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
     # The prompt travels on standard input, never on the command line.
-    assert call["prompt"] == detail["prompt"] and "DEMO-101" not in " ".join(call["args"])
+    assert "new ticket, DEMO-101" in call["prompt"] and "DEMO-101" not in " ".join(args)
     assert Path(call["cwd"]).resolve() == project.root.resolve()
     assert call["sf"] and "web-demo-state" in call["sf"]      # same (simulated) CLI as the page
     assert call["python"] == sys.executable                   # same Python for the MCP server
-    # Nothing in the command grants approval for org writes.
-    assert not any("bypass" in a.lower() or "dangerously" in a.lower() or "allowedTools" in a for a in call["args"])
+    # What the unattended session may use is spelled out: every read-only tool, and not one that changes an org.
+    allowed = args[args.index("--allowedTools") + 1].split(",")
+    refused = args[args.index("--disallowedTools") + 1].split(",")
+    assert {agent.TOOL_PREFIX + name for name in server.READ_ONLY_TOOLS} <= set(allowed)
+    for name in server.WRITE_TOOLS:
+        assert agent.TOOL_PREFIX + name in refused and agent.TOOL_PREFIX + name not in allowed
+    for builtin in ("Bash", "WebFetch", "WebSearch"):
+        assert builtin in refused and builtin not in allowed
+    assert not any("bypass" in a.lower() or "dangerously" in a.lower() for a in args)
+    assert "--model" not in args and "--mcp-config" not in args   # no model chosen; this test project has no .mcp.json
 
     events = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"]
     assert [(e["kind"], e["label"]) for e in events] == [
@@ -418,11 +439,76 @@ def test_agent_run_starts_claude_code_unattended_and_reports_progress(web, fake_
     assert events[4]["detail"] == "SELECT Id FROM Case" and events[5]["detail"] == "tickets/DEMO-101/report.md"
     assert events[-1]["turns"] == 12 and events[-1]["duration_seconds"] == 183
     stored = json.loads((project.ticket("DEMO-101") / "run.json").read_text())
-    assert stored["status"] == "finished"
+    assert stored["status"] == "finished" and stored["events"] == 8
+
+
+def test_unattended_command_attaches_only_the_projects_own_tool_server(project, fake_claude, tmp_path):
+    """With the project's server file present, nothing else the user has connected is reachable."""
+    (project.root / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+    command = agent.build_command("claude", project.root, "sonnet")
+    position = command.index("--mcp-config")
+    assert command[position + 1] == str(project.root / ".mcp.json") and command[position + 2] == "--strict-mcp-config"
+    assert command[-2:] == ["--model", "sonnet"]
+    allowed, refused = agent.tool_permissions()
+    assert not set(allowed) & set(refused)
+    assert not [name for name in allowed if any(write in name for write in ORG_WRITE_NAMES)]
+
+
+def test_model_choice_is_stored_with_the_ticket_and_passed_on(web, fake_claude, monkeypatch):
+    status, made = submit(web, model="sonnet")
+    assert status == 200 and made["ticket"]["model"] == "sonnet"
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    web.wait_until_finished("DEMO-101")
+    args = json.loads(fake_claude.read_text(encoding="utf-8"))["args"]
+    assert args[-2:] == ["--model", "sonnet"]
+    # Changed when starting again; an empty choice goes back to Claude Code's default, or to the environment's.
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "model": ""})
+    web.wait_until_finished("DEMO-101")
+    assert "--model" not in json.loads(fake_claude.read_text(encoding="utf-8"))["args"]
+    assert web.get("/api/tickets/DEMO-101")[1]["model"] is None
+    monkeypatch.setenv("SFTI_CLAUDE_MODEL", "opus")
+    assert web.get("/api/status")[1]["default_model"] == "opus"
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    web.wait_until_finished("DEMO-101")
+    assert json.loads(fake_claude.read_text(encoding="utf-8"))["args"][-2:] == ["--model", "opus"]
+    assert set(web.get("/api/status")[1]["models"]) == {"", "sonnet", "opus"}
+
+
+@pytest.mark.parametrize("model", ["--dangerously-skip-permissions", "a b", "x" * 61, "son;net", "-p"])
+def test_a_model_name_cannot_smuggle_an_option(web, model):
+    status, data = submit(web, model=model)
+    assert status == 400 and "model" in data["error"]["message"]
+    assert web.get("/api/tickets")[1]["tickets"] == []
+    assert agent.chosen_model({"model": model}) is None
+
+
+def test_a_run_that_ends_without_a_report_is_not_called_finished(web, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "no-report")
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    result = web.wait_until_finished("DEMO-101")
+    assert result["run"]["status"] == "incomplete" and result["stage"] == "incomplete"
+    last = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"][-1]
+    assert last["kind"] == "warn" and last["label"] == "It stopped before writing a report"
+    assert "Add information" in last["detail"]
+
+
+def test_a_very_long_run_keeps_its_newest_events_and_its_count(web, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "flood")
+    monkeypatch.setenv("FAKE_CLAUDE_FLOOD", "40")
+    monkeypatch.setattr(agent, "MAX_EVENTS", 25)
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    result = web.wait_until_finished("DEMO-101")
+    events = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"]
+    assert result["run"]["events"] == 48 and len(events) == 25      # 8 as in a short run, plus 40 notes
+    assert [e["n"] for e in events] == list(range(24, 49))          # numbering goes on; the oldest are dropped
+    assert events[-1]["kind"] == "done"                             # the end of the run is what is kept
+    assert web.get("/api/tickets/DEMO-101/events?after=46")[1]["events"][0]["n"] == 47
 
 
 @pytest.mark.parametrize("mode,label,detail", [
-    ("no-mcp", "The sf-investigator tools did not start", "SFTI_PYTHON"),
+    ("no-mcp", "The sf-investigator tools did not start", "Check again"),
     ("crash", "Claude Code ended without finishing", "boom"),
 ])
 def test_agent_failures_are_explained(web, fake_claude, monkeypatch, mode, label, detail):
@@ -435,16 +521,26 @@ def test_agent_failures_are_explained(web, fake_claude, monkeypatch, mode, label
     assert errors[0]["label"] == label and detail in errors[0]["detail"]
 
 
-def test_untrusted_folder_is_detected_and_explained_instead_of_running_without_tools(web, fake_claude, monkeypatch):
-    """Claude Code ignores the project's allow list until the folder was trusted once interactively."""
+def test_a_folder_never_opened_in_claude_code_still_works(web, fake_claude, monkeypatch):
+    """Claude Code ignores the project's allow list until the folder was trusted once in a terminal. The page
+    names the read-only tools on the command line instead, so that first-time step is not needed."""
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "untrusted")
     submit(web)
     web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
     result = web.wait_until_finished("DEMO-101", timeout=30)
-    assert result["stage"] == "failed"
-    errors = [e for e in web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"] if e["kind"] == "error"]
-    assert len(errors) == 1 and errors[0]["label"] == "Claude Code has not been used in this folder yet"
-    assert "run 'claude' once" in errors[0]["detail"] and "trusting the folder" in errors[0]["detail"]
+    assert result["run"]["status"] == "finished"
+    events = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"]
+    assert not [e for e in events if e["kind"] == "error"] and events[-1]["kind"] == "done"
+
+
+def test_without_its_tools_the_run_is_stopped_at_once(web, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "no-mcp")
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    web.wait_until_finished("DEMO-101")
+    events = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"]
+    # One reason, and nothing after it: no second, vaguer error from the process being stopped.
+    assert [e["kind"] for e in events] == ["info", "error"] and "fatal" not in events[-1]
 
 
 def test_agent_run_without_claude_code_explains_the_manual_path(web, tmp_path, monkeypatch):
@@ -466,7 +562,9 @@ def test_a_running_investigation_can_be_stopped(web, fake_claude, monkeypatch):
         time.sleep(0.1)
     assert web.get("/api/tickets/DEMO-101")[1]["stage"] == "running"
     assert web.request("DELETE", "/api/tickets/DEMO-101")[0] == 400     # not while it runs
-    assert web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})[1]["run"]["status"] == "running"  # no second run
+    status, second = web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "note": "one more thing to check"})
+    assert status == 400 and "already being investigated" in second["error"]["message"]   # no second run
+    assert web.get("/api/tickets/DEMO-101")[1]["attachments"] == []                        # and its note is not kept
     assert web.post("/api/tickets/DEMO-101/cancel")[1]["cancelled"] is True
     result = web.wait_until_finished("DEMO-101")
     assert result["run"]["status"] == "cancelled" and result["stage"] == "cancelled"
@@ -500,6 +598,159 @@ def test_interrupted_run_is_reported_after_a_restart(project, tmp_path):
                                   '{"type": "user", "message": null}'])
 def test_stream_lines_that_carry_nothing_are_ignored(line):
     assert agent.events_from_stream_line(line) == []
+
+
+# --- adding information, attaching files, taking the result away ----------------------------
+
+
+def test_follow_up_information_is_kept_and_the_next_run_continues_from_what_is_there(web, fake_claude, project):
+    submit(web)
+    status, saved = web.post("/api/tickets/DEMO-101/note", {"text": "  It also happens for cases created from email.  "})
+    assert status == 200 and saved["saved"] == "attachments/follow-up-01.txt"
+    note = (project.ticket("DEMO-101") / "attachments" / "follow-up-01.txt").read_text(encoding="utf-8")
+    assert note.startswith("Added by the user on 20") and note.endswith("It also happens for cases created from email.\n")
+    # Nothing was gathered yet, so the first run is still a first run.
+    assert "already been worked on" not in web.get("/api/tickets/DEMO-101")[1]["prompt"]
+
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    web.wait_until_finished("DEMO-101")
+    status, _ = web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "note": "The batch size is 200."})
+    assert status == 200
+    detail = web.wait_until_finished("DEMO-101")
+    assert detail["attachments"] == ["follow-up-01.txt", "follow-up-02.txt"]
+    prompt = json.loads(fake_claude.read_text(encoding="utf-8"))["prompt"]
+    assert prompt.startswith("Ticket DEMO-101 was submitted through the web interface and has already been worked on.")
+    assert "evidence_index" in prompt and "instead of starting again" in prompt and "follow-up-NN.txt" in prompt
+    assert prompt == detail["prompt"]
+
+    for body, fragment in (({"text": ""}, "Write what"), ({"text": "x" * 20_001}, "too long"), ({}, "Write what")):
+        status, data = web.post("/api/tickets/DEMO-101/note", body)
+        assert status == 400 and fragment in data["error"]["message"]
+    assert web.post("/api/tickets/NOPE-1/note", {"text": "hello there"})[0] == 400
+
+
+def test_files_can_be_attached_to_a_ticket(web, project):
+    submit(web)
+    picture = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 100).decode()
+    status, saved = web.post("/api/tickets/DEMO-101/attachments", {"name": "Error screen (1).PNG", "content_base64": picture})
+    assert status == 200 and saved == {"ok": True, "saved": "attachments/Error-screen-1-.PNG", "bytes": 108}
+    assert (project.ticket("DEMO-101") / "attachments" / "Error-screen-1-.PNG").read_bytes().startswith(b"\x89PNG")
+    # A path in the name is reduced to the file name; nothing is written outside the ticket's attachments.
+    status, saved = web.post("/api/tickets/DEMO-101/attachments",
+                             {"name": "..\\..\\..\\sfti.config.json", "content_base64": base64.b64encode(b"{}").decode()})
+    assert status == 200 and saved["saved"] == "attachments/sfti.config.json"
+    assert not (project.root / "sfti.config.json").exists()
+    status, saved = web.post("/api/tickets/DEMO-101/attachments",
+                             {"name": "../../outside.txt", "content_base64": base64.b64encode(b"hello").decode()})
+    assert saved["saved"] == "attachments/outside.txt" and not (project.root / "outside.txt").exists()
+    assert web.get("/api/tickets/DEMO-101")[1]["attachments"] == ["Error-screen-1-.PNG", "outside.txt", "sfti.config.json"]
+
+    text = base64.b64encode(b"hello").decode()
+    for body, fragment in (
+        ({"name": "tool.exe", "content_base64": text}, "not accepted"),
+        ({"name": "page.html", "content_base64": text}, "not accepted"),
+        ({"name": "no-extension", "content_base64": text}, "not accepted"),
+        ({"name": "", "content_base64": text}, "no name"),
+        ({"name": "empty.txt", "content_base64": ""}, "empty"),
+        ({"name": "broken.txt", "content_base64": "not base64 !!"}, "could not be read"),
+        ({"name": "ticket-original.txt", "content_base64": text}, "used by the investigator"),
+        ({"name": "follow-up-07.txt", "content_base64": text}, "used by the investigator"),
+    ):
+        status, data = web.post("/api/tickets/DEMO-101/attachments", body)
+        assert status == 400 and fragment in data["error"]["message"], body["name"]
+    assert (project.ticket("DEMO-101") / "attachments" / "ticket-original.txt").read_text(encoding="utf-8") == TICKET_TEXT
+    assert web.post("/api/tickets/DEMO-101/attachments", {"name": "a.txt", "content_base64": text}, token=False)[0] == 403
+
+
+def test_attachment_size_and_count_are_limited(web, project, monkeypatch):
+    submit(web)
+    monkeypatch.setattr(tickets, "MAX_ATTACHMENT_BYTES", 1000)
+    monkeypatch.setattr(tickets, "MAX_ATTACHMENTS", 2)
+    big = base64.b64encode(b"x" * 1001).decode()
+    status, data = web.post("/api/tickets/DEMO-101/attachments", {"name": "big.log", "content_base64": big})
+    assert status == 400 and "too large" in data["error"]["message"]
+    small = base64.b64encode(b"x").decode()
+    assert web.post("/api/tickets/DEMO-101/attachments", {"name": "1.txt", "content_base64": small})[0] == 200
+    assert web.post("/api/tickets/DEMO-101/attachments", {"name": "2.txt", "content_base64": small})[0] == 200
+    status, data = web.post("/api/tickets/DEMO-101/attachments", {"name": "3.txt", "content_base64": small})
+    assert status == 400 and "2 attached files at most" in data["error"]["message"]
+    assert web.post("/api/tickets/DEMO-101/attachments", {"name": "2.txt", "content_base64": small})[0] == 200  # replace
+    # The request itself is refused before it is read when it is larger than any accepted file could be.
+    status, _, _ = web.request("POST", "/api/tickets/DEMO-101/attachments",
+                               headers={"Content-Type": "application/json", "X-SFTI-Token": web.app.token,
+                                        "Content-Length": "50000000"})
+    assert status == 413
+
+
+def test_the_result_can_be_downloaded_as_one_file(web):
+    submit(web)
+    assert web.request("GET", "/tickets/DEMO-101/result.zip")[0] == 404      # nothing to take away yet
+    web.post("/api/tickets/DEMO-101/run", {"runner": "sample"})
+    web.wait_until_finished("DEMO-101")
+    status, headers, raw = web.request("GET", "/tickets/DEMO-101/result.zip")
+    assert status == 200 and headers["Content-Type"] == "application/zip"
+    assert headers["Content-Disposition"] == 'attachment; filename="DEMO-101-result.zip"'
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        assert sorted(archive.namelist()) == ["DEMO-101/comment.md", "DEMO-101/fix.diff", "DEMO-101/report.html",
+                                              "DEMO-101/report.md", "DEMO-101/ticket.md"]
+        assert b"Root cause" in archive.read("DEMO-101/report.md")
+    # The evidence, the retrieved source and the original ticket text stay on this computer.
+    assert web.request("GET", "/tickets/..%2F..%2Fx/result.zip")[0] == 404
+    assert web.request("GET", "/tickets/NOPE-1/result.zip")[0] == 404
+
+
+# --- answers that take seconds are remembered for a moment ------------------------------------
+
+
+def test_slow_views_are_remembered_briefly_and_asked_again_on_request(web, monkeypatch):
+    inv = web.app.investigator()
+    calls = {"orgs": 0, "info": 0}
+    list_orgs, org_info = inv.list_orgs, inv.org_info
+
+    def counted_list():
+        calls["orgs"] += 1
+        return list_orgs()
+
+    def counted_info(alias):
+        calls["info"] += 1
+        return org_info(alias)
+
+    monkeypatch.setattr(inv, "list_orgs", counted_list)
+    monkeypatch.setattr(inv, "org_info", counted_info)
+    for _ in range(3):
+        assert len(web.get("/api/orgs")[1]["orgs"]) == 3
+        assert web.get("/api/orgs/demo-prod")[1]["classification"] == "production"
+    assert calls == {"orgs": 1, "info": 1}
+    assert len(web.get("/api/orgs?refresh=1")[1]["orgs"]) == 3
+    web.get("/api/orgs/demo-prod")
+    assert calls == {"orgs": 2, "info": 2}           # "I have connected it" asks everything again
+    # A failure is never remembered.
+    assert web.get("/api/orgs/nobody")[0] == 502 and web.get("/api/orgs/nobody")[0] == 502
+    assert calls["info"] == 4
+
+
+def test_what_is_remembered_is_for_display_only(web):
+    """The page's short memory must never decide a write: the guard asks the org itself each time."""
+    import inspect
+    from core import org_guard
+    assert "ViewCache" not in inspect.getsource(org_guard) and "cache" not in inspect.getsource(org_guard.OrgGuard.authorize_write)
+    web.get("/api/orgs/demo-prod")
+    web.post("/api/demo", {"enabled": True, "reset": True})
+    assert web.app.cache._items == {}                # switching orgs forgets everything
+
+
+def test_org_memory_can_be_searched_from_the_page(web):
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "sample"})
+    web.wait_until_finished("DEMO-101")
+    org_id = web.get("/api/memory")[1]["orgs"][0]["org_id"]
+    status, found = web.get(f"/api/memory/{org_id}/search?q=case%20priority%20premium")
+    assert status == 200 and found["notes"] and found["components"]
+    assert any("CaseEscalationService" in c["component"] for c in found["components"])
+    status, nothing = web.get(f"/api/memory/{org_id}/search?q=zebra")
+    assert status == 200 and nothing["notes"] == [] and nothing["components"] == []
+    status, empty = web.get(f"/api/memory/{org_id}/search?q=")
+    assert status == 400 and "few words" in empty["error"]["message"]
 
 
 def test_tool_labels_cover_every_tool_of_the_server():

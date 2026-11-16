@@ -7,11 +7,13 @@ interface, from Claude Code, or is still running.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 import shutil
 import stat
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,8 +24,18 @@ from core.report import _find_section, _sections, markdown_to_html
 from core.workspace import validate_ticket_key
 
 MAX_TICKET_CHARS = 200_000
+MAX_FOLLOW_UP_CHARS = 20_000
+MAX_ATTACHMENT_BYTES = 5_000_000
+MAX_ATTACHMENTS = 20
 ORIGINAL_NAME = "ticket-original.txt"
 REQUEST_NAME = "request.json"
+#: What may be attached to a ticket: text the investigator can read, and images and PDFs it can look at.
+ATTACHMENT_TYPES = frozenset({".txt", ".log", ".md", ".csv", ".json", ".xml", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
+#: What the result download contains, when present.
+BUNDLE_FILES = ("report.html", "report.md", "comment.md", "fix.diff", "ticket.md")
+
+_FOLLOW_UP_RE = re.compile(r"^follow-up-\d+\.txt$")
+MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,59}$")
 
 _KEY_LINE_RE = re.compile(r"^\s*(?:key|ticket|issue)\s*[:#]\s*([A-Za-z][A-Za-z0-9_]{0,19}-\d{1,9})\b", re.I | re.M)
 _KEY_ANY_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,19}-\d{1,9})\b")
@@ -53,7 +65,7 @@ def detect_title(text: str) -> str | None:
 
 
 def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = None,
-                  sandbox: str | None = None) -> dict[str, Any]:
+                  sandbox: str | None = None, model: str | None = None) -> dict[str, Any]:
     """Create ``tickets/<KEY>/`` from pasted ticket text and record which org to investigate."""
     if not isinstance(text, str) or len(text.strip()) < 40:
         raise InputValidationError("Paste the whole ticket: description, comments and history.")
@@ -67,6 +79,7 @@ def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = N
     key = validate_ticket_key(key.upper() if re.match(r"^[A-Za-z][A-Za-z0-9_]*-\d+$", key) else key)
     if not isinstance(org, str) or not org.strip():
         raise InputValidationError("Choose the org to investigate.")
+    model = set_model(None, model)  # checked before anything is created
     folder = inv.workspace.tickets_root / key
     if (folder / ORIGINAL_NAME).exists() or (folder / "attachments" / ORIGINAL_NAME).exists():
         raise WorkspaceError(
@@ -77,7 +90,9 @@ def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = N
     (attachments / ORIGINAL_NAME).write_text(text, encoding="utf-8")
     request = {"key": key, "title": detect_title(text), "org": org.strip(), "sandbox": (sandbox or "").strip() or None,
                "created_at": utc_now(), "source": "web"}
-    (folder / REQUEST_NAME).write_text(json.dumps(request, indent=2), encoding="utf-8")
+    if model:
+        request["model"] = model
+    _write_request(folder, request)
     return request
 
 
@@ -89,23 +104,132 @@ def read_request(folder: Path) -> dict[str, Any]:
         return {}
 
 
-def agent_prompt(request: dict[str, Any]) -> str:
-    """The instruction given to Claude Code for a ticket submitted through the interface."""
+def _write_request(folder: Path, request: dict[str, Any]) -> None:
+    (folder / REQUEST_NAME).write_text(json.dumps(request, indent=2), encoding="utf-8")
+
+
+def set_model(folder: Path | None, model: str | None) -> str | None:
+    """Validate a model name (a short word such as ``sonnet``) and, given a folder, store it for the ticket."""
+    model = (model or "").strip() or None
+    if model and not MODEL_RE.match(model):
+        raise InputValidationError("That is not a model name.", hint="Use a name such as sonnet or opus, or leave it empty.")
+    if folder is not None:
+        request = read_request(folder)
+        if model:
+            request["model"] = model
+        else:
+            request.pop("model", None)
+        _write_request(folder, request)
+    return model
+
+
+# --- What the user adds after the ticket is created --------------------------------------------
+
+
+def _attachment_names(folder: Path) -> list[str]:
+    attachments = folder / "attachments"
+    if not attachments.is_dir():
+        return []
+    return sorted(p.name for p in attachments.iterdir() if p.is_file() and p.name != ORIGINAL_NAME)
+
+
+def add_follow_up(inv: Investigator, key: str, text: str) -> dict[str, Any]:
+    """Keep something the user adds after the first run (an answer to an open question, a record Id, a correction).
+
+    It is saved next to the ticket as ``attachments/follow-up-NN.txt`` and the next run is told to read it.
+    """
+    if not isinstance(text, str) or len(text.strip()) < 3:
+        raise InputValidationError("Write what you want to add.")
+    if len(text) > MAX_FOLLOW_UP_CHARS:
+        raise InputValidationError(f"That is too long ({MAX_FOLLOW_UP_CHARS:,} characters at most). Attach it as a file instead.")
+    folder = inv.workspace.ticket_dir(key)
+    attachments = folder / "attachments"
+    attachments.mkdir(exist_ok=True)
+    number = 1 + sum(1 for name in _attachment_names(folder) if _FOLLOW_UP_RE.match(name))
+    name = f"follow-up-{number:02d}.txt"
+    (attachments / name).write_text(f"Added by the user on {utc_now()}\n\n{text.strip()}\n", encoding="utf-8")
+    return {"saved": f"attachments/{name}"}
+
+
+def save_attachment(inv: Investigator, key: str, name: str, data: bytes) -> dict[str, Any]:
+    """Save a file the user attaches to a ticket (a screenshot, an exported log, a spreadsheet extract)."""
+    if not isinstance(name, str) or not name.strip():
+        raise InputValidationError("The file has no name.")
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name.replace("\\", "/")).name).strip(".-")[:100]
+    suffix = Path(clean).suffix.lower()
+    if not clean or suffix not in ATTACHMENT_TYPES:
+        raise InputValidationError(
+            f"Files of type '{suffix or 'unknown'}' are not accepted.",
+            hint="Accepted: " + ", ".join(sorted(ATTACHMENT_TYPES)) + ".")
+    if clean == ORIGINAL_NAME or _FOLLOW_UP_RE.match(clean):
+        raise InputValidationError("That file name is used by the investigator. Rename the file and try again.")
+    if not data:
+        raise InputValidationError("The file is empty.")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise InputValidationError(f"The file is too large ({MAX_ATTACHMENT_BYTES // 1_000_000} MB at most).")
+    folder = inv.workspace.ticket_dir(key)
+    attachments = folder / "attachments"
+    attachments.mkdir(exist_ok=True)
+    if len(_attachment_names(folder)) >= MAX_ATTACHMENTS and not (attachments / clean).exists():
+        raise InputValidationError(f"A ticket can hold {MAX_ATTACHMENTS} attached files at most.")
+    (attachments / clean).write_bytes(data)
+    return {"saved": f"attachments/{clean}", "bytes": len(data)}
+
+
+def has_progress(folder: Path) -> bool:
+    """True when an earlier run already left work in the ticket folder (so the next one continues from it)."""
+    if (folder / "report.md").is_file() or _count(folder / "queries", "*.json") or _count(folder / "logs", "*.log"):
+        return True
+    return (folder / "metadata" / "force-app").is_dir() and any((folder / "metadata" / "force-app").rglob("*.*"))
+
+
+def result_bundle(inv: Investigator, key: str) -> bytes:
+    """A zip of what the user takes away from a ticket: the report, the comment, the fix and the ticket summary."""
+    folder = inv.workspace.ticket_dir(key)
+    present = [name for name in BUNDLE_FILES if (folder / name).is_file()]
+    if "report.md" not in present:
+        raise WorkspaceError("There is no report for this ticket yet.")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in present:
+            archive.write(folder / name, f"{key}/{name}")
+    return buffer.getvalue()
+
+
+def agent_prompt(request: dict[str, Any], *, resume: bool = False) -> str:
+    """The instruction given to Claude Code for a ticket submitted through the interface.
+
+    ``resume`` is for a ticket an earlier run already worked on: continue from what is there.
+    """
     key = request["key"]
     sandbox = request.get("sandbox")
     lines = [
-        f"A new ticket, {key}, was submitted through the web interface.",
+        (f"Ticket {key} was submitted through the web interface and has already been worked on. Continue it."
+         if resume else f"A new ticket, {key}, was submitted through the web interface."),
         f"Its full original text is in tickets/{key}/attachments/{ORIGINAL_NAME}. Read all of it, comments included.",
+        f"Read every other file in tickets/{key}/attachments/ as well: files named follow-up-NN.txt are what the "
+        "user added after an earlier run (answers, corrections, new facts). They are part of the ticket, and the "
+        "newest one wins where they disagree.",
         f"Org to investigate: {request['org']}." + (f" Non-production org available for tests: {sandbox}." if sandbox else ""),
         "",
         "Follow CLAUDE.md and the skills, in this order: intake-ticket, investigate-ticket, propose-fix, "
-        "write-ticket-comment.",
+        "write-ticket-comment. Each one is a file, .claude/skills/<name>/SKILL.md: read it before its step.",
         "",
+    ]
+    if resume:
+        lines += [
+            f"What earlier runs left is in tickets/{key}/: ticket.md, metadata/, queries/, logs/ and, if they got "
+            "that far, report.md, fix.diff and comment.md. Start from it instead of starting again: call "
+            "evidence_index to see what is there, re-check whatever a follow-up changes, gather only what is "
+            "still missing, and bring ticket.md, the report, the fix and the comment up to date.",
+            "",
+        ]
+    lines += [
         "You are running unattended, so:",
         "- Do not ask questions. Record every ambiguity in ticket.md, state the assumption you proceed on, "
         "and list what you would have asked under Open questions in the report.",
-        "- Stay in advise mode whatever the config says: hand the fix over as a diff. Write tools need an "
-        "approval nobody can give here and will be refused; do not attempt them.",
+        "- Stay in advise mode whatever the config says: hand the fix over as a diff. The tools that change an "
+        "org are not available here, and there is no shell.",
         "- Start with recall_org_knowledge for this org, and before you finish, use remember_org_fact for "
         "what you learned about how the org is built.",
         "- Finish only when report.md passes validate_report, report.html is exported, fix.diff exists if you "
@@ -200,7 +324,7 @@ def ticket_status(inv: Investigator, key: str, run: dict[str, Any] | None = None
         stage = "done"
     elif report_md.is_file():
         stage = "report"
-    elif run_state in ("failed", "cancelled", "interrupted"):
+    elif run_state in ("failed", "cancelled", "interrupted", "incomplete"):
         stage = run_state
     elif evidence_count or intake_done:
         stage = "in_progress"
@@ -214,6 +338,8 @@ def ticket_status(inv: Investigator, key: str, run: dict[str, Any] | None = None
         "sandbox": request.get("sandbox"),
         "created_at": request.get("created_at"),
         "source": request.get("source") or "claude-code",
+        "model": request.get("model"),
+        "attachments": _attachment_names(folder),
         "stage": stage,
         "steps": steps,
         "root_cause_status": root_cause_status,
@@ -257,7 +383,7 @@ def ticket_detail(inv: Investigator, key: str, run: dict[str, Any] | None = None
     except SfInvestigatorError:
         out["evidence"] = []
     request = read_request(folder)
-    out["prompt"] = agent_prompt(request) if request.get("org") else None
+    out["prompt"] = agent_prompt(request, resume=has_progress(folder)) if request.get("org") else None
     return out
 
 

@@ -3,11 +3,16 @@
 Two runners:
 
 * ``agent``: starts Claude Code without a terminal (``claude -p``) in the project folder, with the
-  prompt on standard input. Claude Code loads ``CLAUDE.md``, the skills, the permission settings
-  and the ``sf-investigator`` MCP server exactly as in an interactive session. Nobody is there to
-  approve anything, so every tool in the ``ask`` list (all the org write tools) is refused; file
-  edits are accepted so that it can write the ticket folder. The permission rules still deny
-  edits to the safety files.
+  prompt on standard input. Claude Code loads ``CLAUDE.md`` and the skills as in an interactive
+  session. The command line narrows what that unattended session can reach:
+
+  - only the project's own MCP server is attached (``--strict-mcp-config``), so connectors the
+    user has for other purposes are out of reach;
+  - the read-only investigator tools are allowed by name, taken from the server's own list;
+  - the tools that change an org are removed altogether, together with web access. Nobody is
+    there to approve a write, so none can happen;
+  - file edits are accepted so that it can write the ticket folder. The project's permission
+    rules still deny edits to the safety files.
 * ``sample``: replays the recorded DEMO-101 investigation against the simulated org, without the
   AI agent (see ``simulator.demo``).
 
@@ -27,11 +32,18 @@ from typing import Any, Callable
 
 from core.app import Investigator
 
-from .tickets import agent_prompt, read_request, utc_now
+from .tickets import MODEL_RE, agent_prompt, has_progress, read_request, utc_now
 
 TOOL_PREFIX = "mcp__sf-investigator__"
 DEFAULT_TIMEOUT_SECONDS = 45 * 60
 MAX_EVENTS = 2000
+
+#: Claude Code's own tools that an unattended investigation may use without asking. No shell.
+BUILTIN_ALLOWED = ("Read", "Glob", "Grep", "Skill", "Task", "Agent", "TodoWrite", "ToolSearch")
+#: Removed from an unattended investigation, on top of the org write tools: no shell, no web.
+BUILTIN_REFUSED = ("Bash", "WebFetch", "WebSearch")
+#: Model names offered on the page. Empty means "whatever Claude Code uses by default".
+MODEL_CHOICES = {"": "Claude Code's default", "sonnet": "Sonnet: faster, uses less", "opus": "Opus: most thorough"}
 
 #: What each tool call means, in words a non-developer can follow.
 TOOL_LABELS = {
@@ -76,7 +88,40 @@ BUILTIN_LABELS = {
     "Read": "Reading a file", "Write": "Writing a file", "Edit": "Editing a file", "Glob": "Looking for files",
     "Grep": "Searching files", "Skill": "Following a skill", "Agent": "Tracing the execution path",
     "Task": "Tracing the execution path", "TodoWrite": "Planning", "Bash": "Running a command",
+    "ToolSearch": "Loading tools",
 }
+
+
+def tool_permissions() -> tuple[list[str], list[str]]:
+    """``(allowed, refused)`` tool names for an unattended investigation.
+
+    Both come from the MCP server's own registry, so a tool that changes an org can never be in
+    the allowed list: every write tool is in the refused one.
+    """
+    from mcp_server.server import READ_ONLY_TOOLS, WRITE_TOOLS
+
+    allowed = [TOOL_PREFIX + name for name in READ_ONLY_TOOLS if name not in WRITE_TOOLS] + list(BUILTIN_ALLOWED)
+    refused = [TOOL_PREFIX + name for name in WRITE_TOOLS] + list(BUILTIN_REFUSED)
+    return allowed, refused
+
+
+def chosen_model(request: dict[str, Any]) -> str | None:
+    """The model for this run: the ticket's choice, else ``SFTI_CLAUDE_MODEL``, else Claude Code's default."""
+    value = str(request.get("model") or os.environ.get("SFTI_CLAUDE_MODEL") or "").strip()
+    return value if value and MODEL_RE.match(value) else None
+
+
+def build_command(executable: str, root: Path, model: str | None = None) -> list[str]:
+    """The exact command line of an unattended investigation. The module text says what each part is for."""
+    allowed, refused = tool_permissions()
+    command = [executable, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+    server_config = Path(root) / ".mcp.json"
+    if server_config.is_file():
+        command += ["--mcp-config", str(server_config), "--strict-mcp-config"]
+    command += ["--allowedTools", ",".join(allowed), "--disallowedTools", ",".join(refused)]
+    if model:
+        command += ["--model", model]
+    return command
 
 
 def find_claude() -> str | None:
@@ -131,14 +176,15 @@ def events_from_stream_line(line: str) -> list[dict[str, Any]]:
         servers = message.get("mcp_servers") or []
         ours = next((s for s in servers if isinstance(s, dict) and s.get("name") == "sf-investigator"), None)
         if ours is None or ours.get("status") != "connected":
-            events.append({"kind": "error", "label": "The sf-investigator tools did not start",
-                           "detail": "Claude Code could not connect to the project's MCP server. Run "
-                                     "'python -m core.prereqs' and check that the project is installed in the "
-                                     "Python that Claude Code uses (see SFTI_PYTHON in the README)."})
+            events.append({"kind": "error", "fatal": True, "label": "The sf-investigator tools did not start",
+                           "detail": "Claude Code could not connect to the project's MCP server. Open 'Get "
+                                     "started' and press 'Check again': the project must be installed in the "
+                                     "Python that runs this page (the start script does that)."})
         else:
             tools = [t for t in message.get("tools") or [] if str(t).startswith(TOOL_PREFIX)]
             events.append({"kind": "info", "label": "Investigator started",
-                           "detail": f"{len(tools)} Salesforce tools available"})
+                           "detail": f"{len(tools)} Salesforce tools available"
+                                     + (f", model {message['model']}" if message.get("model") else "")})
     elif kind == "assistant":
         for block in ((message.get("message") or {}).get("content")) or []:
             if not isinstance(block, dict):
@@ -178,6 +224,7 @@ class Run:
         self.events: list[dict[str, Any]] = []
         self.process: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._count = 0
         self._log = folder / "run-events.jsonl"
         try:
             self._log.write_text("", encoding="utf-8")
@@ -186,9 +233,11 @@ class Run:
 
     def add(self, event: dict[str, Any]) -> None:
         with self._lock:
-            event = {"n": len(self.events) + 1, "at": utc_now(), **{k: v for k, v in event.items() if v is not None}}
-            if len(self.events) < MAX_EVENTS:
-                self.events.append(event)
+            self._count += 1
+            event = {"n": self._count, "at": utc_now(), **{k: v for k, v in event.items() if v is not None}}
+            self.events.append(event)
+            # A very long run keeps its newest events in memory (the end matters most); the file has all.
+            del self.events[:-MAX_EVENTS]
             try:
                 with self._log.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(event) + "\n")
@@ -206,7 +255,7 @@ class Run:
     def summary(self) -> dict[str, Any]:
         last = self.events[-1] if self.events else None
         return {"status": self.status, "runner": self.runner, "started_at": self.started_at,
-                "finished_at": self.finished_at, "events": len(self.events),
+                "finished_at": self.finished_at, "events": self._count,
                 "last": {k: last[k] for k in ("kind", "label", "detail") if k in last} if last else None}
 
 
@@ -231,7 +280,7 @@ def load_events(folder: Path) -> list[dict[str, Any]]:
                 continue
     except OSError:
         pass
-    return events
+    return events[-MAX_EVENTS:]
 
 
 class Runner:
@@ -333,8 +382,14 @@ class Runner:
             run.finish("failed")
             return
         request = read_request(run.folder)
-        prompt = agent_prompt(request)
-        command = [executable, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+        prompt = agent_prompt(request, resume=has_progress(run.folder))
+        try:
+            command = build_command(executable, self.root, chosen_model(request))
+        except ImportError as exc:
+            run.add({"kind": "error", "label": "The sf-investigator tools are not installed",
+                     "detail": f"{exc}. Run the start script again (see QUICKSTART.md), then start the investigation again."})
+            run.finish("failed")
+            return
         kwargs: dict[str, Any] = {}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -356,21 +411,12 @@ class Runner:
         stderr_tail: list[str] = []
 
         def drain_stderr() -> None:
+            # Kept for the error message if the run fails. A line saying the folder "has not been
+            # trusted" is expected and harmless here: the tools are allowed on the command line.
             assert process.stderr is not None
             for line in process.stderr:
                 stderr_tail.append(line.rstrip())
                 del stderr_tail[:-20]
-                if "has not been trusted" in line and run.status == "running":
-                    # Without trust, Claude Code ignores the project's allow list, so every investigator
-                    # tool would be refused. Stop now and say how to fix it, rather than produce nothing.
-                    run.add({"kind": "error", "label": "Claude Code has not been used in this folder yet",
-                             "detail": "Open a terminal in the project folder, run 'claude' once and accept the "
-                                       "question about trusting the folder. Then come back and start the "
-                                       "investigation again. This is asked once per computer."})
-                    run.status = "failed"
-                    from core.sf_cli import _kill_tree
-                    _kill_tree(process)
-                    run.finish("failed")
 
         threading.Thread(target=drain_stderr, daemon=True).start()
         finished_ok = False
@@ -379,10 +425,20 @@ class Runner:
             process.stdin.write(prompt)
             process.stdin.close()
             for line in process.stdout:
+                if run.status != "running":
+                    break  # stopped, timed out or failed for good: what it still prints is not reported
                 for event in events_from_stream_line(line):
+                    fatal = event.pop("fatal", False)
                     if event["kind"] == "done":
                         finished_ok = True
                     run.add(event)
+                    if fatal:
+                        # Without its tools the investigator could only guess. Stop instead.
+                        run.status = "failed"
+                        from core.sf_cli import _kill_tree
+                        _kill_tree(process)
+                        run.finish("failed")
+                        break
             process.wait()
         except (OSError, ValueError) as exc:
             run.add({"kind": "error", "label": "Lost contact with Claude Code", "detail": str(exc)[:300]})
@@ -391,7 +447,15 @@ class Runner:
         if run.status != "running":
             return  # cancelled or timed out; already recorded
         if finished_ok and process.returncode == 0:
-            run.finish("finished")
+            if (run.folder / "report.md").is_file():
+                run.finish("finished")
+            else:
+                # It said it was done, but there is nothing to show. Say so instead of "finished".
+                run.add({"kind": "warn", "label": "It stopped before writing a report",
+                         "detail": "What it gathered is kept in the ticket folder, and its last message is just "
+                                   "above. Add what it is missing under 'Add information', or start it again to "
+                                   "continue from where it stopped."})
+                run.finish("incomplete")
         else:
             if not any(e["kind"] == "error" for e in run.events):
                 run.add({"kind": "error", "label": "Claude Code ended without finishing",

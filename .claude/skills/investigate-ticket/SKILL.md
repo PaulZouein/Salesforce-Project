@@ -78,6 +78,13 @@ Work one hypothesis at a time, cheapest decisive check first.
 **Dependencies**
 - `find_dependencies` on the suspected component, confirmed with `search_metadata`.
 
+**Keep what you will cite**
+- `describe_object`, `find_dependencies`, `recent_org_changes` and `record_history` take `ticket_key`
+  (and `save_as`) like `soql_query` does. Set it whenever the answer supports a claim in the report,
+  including a negative one ("no validation rule on Case", "the class was last modified on the 9th"):
+  the answer is saved under `queries/` and can be cited. An answer that was only seen in the
+  conversation cannot be cited, and the report must then say so.
+
 **Reproduction**
 - Non-production org: `run_apex_tests` on the existing test class. A passing suite that does not
   cover the failing scenario is itself a finding.

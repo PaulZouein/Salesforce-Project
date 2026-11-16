@@ -9,6 +9,8 @@ There is deliberately no route that changes a Salesforce org.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import platform
@@ -16,10 +18,11 @@ import re
 import secrets
 import sys
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from core import prereqs
@@ -33,6 +36,8 @@ from . import __version__, agent, tickets
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY_BYTES = 1_000_000
+#: An attached file travels as base64 inside JSON, which is a third larger than the file.
+MAX_UPLOAD_BODY_BYTES = tickets.MAX_ATTACHMENT_BYTES * 4 // 3 + 4096
 DEFAULT_PORT = 8765
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
@@ -71,6 +76,32 @@ def operating_system() -> str:
     return "windows" if name.startswith("win") else "macos" if name == "darwin" else "linux"
 
 
+class ViewCache:
+    """Recent answers for the pages that run a command-line tool, which takes seconds each time.
+
+    For display only. Nothing that decides whether a write is allowed ever reads from here: the
+    guard asks the org itself, every time. A failure is never kept.
+    """
+
+    def __init__(self) -> None:
+        self._items: dict[Any, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: Any, seconds: float, compute: Callable[[], Any], *, refresh: bool = False) -> Any:
+        with self._lock:
+            hit = self._items.get(key)
+        if hit and not refresh and time.monotonic() - hit[0] < seconds:
+            return hit[1]
+        value = compute()
+        with self._lock:
+            self._items[key] = (time.monotonic(), value)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+
 class App:
     """State shared by all requests: the project root, demo mode, the investigator and the runs."""
 
@@ -82,6 +113,7 @@ class App:
         self._launcher: Path | None = None
         self.demo = False
         self._inv: Investigator | None = None
+        self.cache = ViewCache()
         self.runner = agent.Runner(self.root, self.investigator, self.child_env)
         configured = os.environ.get("SFTI_SF_EXECUTABLE", "")
         if demo or (configured and "simulator" in Path(configured).parts):
@@ -110,6 +142,7 @@ class App:
                 self._launcher = launcher
             self.demo = bool(enabled)
             self._inv = None
+        self.cache.clear()
         return {"demo": self.demo}
 
     def child_env(self) -> dict[str, str]:
@@ -123,10 +156,17 @@ class App:
 
     # -- read-only views ---------------------------------------------------------------------
 
+    def _claude(self, *, refresh: bool = False) -> tuple[str | None, str | None]:
+        """``(path, version)`` of Claude Code. Asking for the version starts a process, so it is remembered."""
+        path = agent.find_claude()
+        if not path:
+            return None, None
+        return path, self.cache.get(("claude", path), 600, lambda: agent.claude_version(path), refresh=refresh)
+
     def status(self) -> dict[str, Any]:
         inv = self.investigator()
         config = inv.get_config()
-        claude = agent.find_claude()
+        claude, claude_version = self._claude()
         return {
             "version": __version__,
             "project": self.root.name,
@@ -135,16 +175,20 @@ class App:
             "mode": config["mode"],
             "config_warnings": config["warnings"],
             "jira": config["jira"],
-            "claude": {"available": bool(claude), "version": agent.claude_version(claude) if claude else None},
+            "claude": {"available": bool(claude), "version": claude_version},
+            "models": agent.MODEL_CHOICES,
+            "default_model": agent.chosen_model({}),
             "tickets": len(inv.workspace.list_tickets()),
             "sample_ticket_key": "DEMO-101",
         }
 
-    def prerequisites(self) -> dict[str, Any]:
+    def prerequisites(self, *, refresh: bool = False) -> dict[str, Any]:
+        return self.cache.get("prereqs", 60, lambda: self._prerequisites(refresh), refresh=refresh)
+
+    def _prerequisites(self, refresh: bool) -> dict[str, Any]:
         inv = self.investigator()
         checks = prereqs.run_checks(inv.cli)
-        claude = agent.find_claude()
-        version = agent.claude_version(claude) if claude else None
+        _, version = self._claude(refresh=refresh)
         checks.insert(4, {"name": "Claude Code", "ok": bool(version), "required": False,
                           "detail": version or "not found",
                           **({} if version else {"hint": "Needed to investigate from this page. Without it you can "
@@ -155,16 +199,31 @@ class App:
                 check["fix"] = FIXES[check["name"]][system]
         return {"os": system, "ok": all(c["ok"] for c in checks if c["required"]), "checks": checks, "demo": self.demo}
 
-    def orgs(self) -> dict[str, Any]:
-        out = self.investigator().list_orgs()
-        out["demo"] = self.demo
-        return out
+    def orgs(self, *, refresh: bool = False) -> dict[str, Any]:
+        def ask() -> dict[str, Any]:
+            out = self.investigator().list_orgs()
+            out["demo"] = self.demo
+            return out
 
-    def org(self, alias: str) -> dict[str, Any]:
-        info = self.investigator().org_info(alias)
-        return {k: info[k] for k in ("target", "alias", "org_id", "name", "instance_url", "classification",
-                                     "writes_allowed", "classification_reason", "what_is_allowed", "org_memory")
-                if k in info}
+        if refresh:
+            self.cache.clear()  # a newly connected org also changes what each org page shows
+        return self.cache.get("orgs", 30, ask, refresh=refresh)
+
+    def org(self, alias: str, *, refresh: bool = False) -> dict[str, Any]:
+        """What kind of org this is, for display. The memory counts are read fresh each time (they are local)."""
+        def ask() -> dict[str, Any]:
+            info = self.investigator().org_info(alias)
+            return {k: info[k] for k in ("target", "alias", "org_id", "name", "instance_url", "classification",
+                                         "writes_allowed", "classification_reason", "what_is_allowed", "org_memory")
+                    if k in info}
+
+        out = dict(self.cache.get(("org", alias), 60, ask, refresh=refresh))
+        if out.get("org_id"):
+            try:
+                out["org_memory"] = self.investigator().knowledge.org_map(out["org_id"])["counts"]
+            except SfInvestigatorError:
+                pass
+        return out
 
     def sample_ticket(self) -> dict[str, Any]:
         from simulator import demo
@@ -176,6 +235,12 @@ class App:
 
     def memory_map(self, org_id: str) -> dict[str, Any]:
         return self.investigator().knowledge.org_map(org_id)
+
+    def memory_search(self, org_id: str, words: str) -> dict[str, Any]:
+        """Search one org's memory, as the investigator does at the start of a ticket. Local; asks no org."""
+        if not words.strip():
+            raise InputValidationError("Type a few words to search for, for example: case priority flow.")
+        return self.investigator().knowledge.search(org_id, words[:300], limit=15)
 
     def memory_verify(self, org_id: str) -> dict[str, Any]:
         """Double-check one org's memory. Reads from the org; changes nothing there."""
@@ -208,11 +273,12 @@ class App:
         return {"key": ticket["key"], "text": "\n".join(lines)}
 
 
-_TICKET_ROUTE = re.compile(r"^/api/tickets/([^/]+)(?:/(run|cancel|events))?$")
+_TICKET_ROUTE = re.compile(r"^/api/tickets/([^/]+)(?:/(run|cancel|events|note|attachments))?$")
 _ORG_ROUTE = re.compile(r"^/api/orgs/([^/]+)$")
-_MEMORY_ROUTE = re.compile(r"^/api/memory/(00D[A-Za-z0-9]{12,15})(?:/(verify))?$")
+_MEMORY_ROUTE = re.compile(r"^/api/memory/(00D[A-Za-z0-9]{12,15})(?:/(verify|search))?$")
 _JIRA_ROUTE = re.compile(r"^/api/jira/([^/]+)$")
 _REPORT_ROUTE = re.compile(r"^/tickets/([^/]+)/report\.html$")
+_RESULT_ROUTE = re.compile(r"^/tickets/([^/]+)/result\.zip$")
 
 
 def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
@@ -226,10 +292,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if os.environ.get("SFTI_WEB_LOG"):
                 super().log_message(format, *args)
 
-        def _send(self, status: int, body: bytes, content_type: str) -> None:
+        def _send(self, status: int, body: bytes, content_type: str, *, download_as: str | None = None) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            if download_as:
+                self.send_header("Content-Disposition", f'attachment; filename="{download_as}"')
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
@@ -255,7 +323,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return False
             return True
 
-        def _body(self) -> dict[str, Any] | None:
+        def _body(self, limit: int = MAX_BODY_BYTES) -> dict[str, Any] | None:
             if self.headers.get("X-SFTI-Token") != app.token:
                 self._error(HTTPStatus.FORBIDDEN, "Missing or wrong page token. Reload the page.")
                 return None
@@ -267,7 +335,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = -1
-            if length < 0 or length > MAX_BODY_BYTES:
+            if length < 0 or length > limit:
                 self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "The request is too large.")
                 return None
             raw = self.rfile.read(length) if length else b""
@@ -304,10 +372,11 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
             if path == "/api/status":
                 return self._guarded(app.status)
+            refresh = (query.get("refresh") or [""])[0] == "1"
             if path == "/api/prereqs":
-                return self._guarded(app.prerequisites)
+                return self._guarded(lambda: app.prerequisites(refresh=refresh))
             if path == "/api/orgs":
-                return self._guarded(app.orgs)
+                return self._guarded(lambda: app.orgs(refresh=refresh))
             if path == "/api/sample":
                 return self._guarded(app.sample_ticket)
             if path == "/api/memory":
@@ -316,10 +385,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return self._guarded(lambda: {"tickets": tickets.list_tickets(inv(), app.runner.summaries())})
             match = _ORG_ROUTE.match(path)
             if match:
-                return self._guarded(lambda: app.org(match.group(1)))
+                return self._guarded(lambda: app.org(match.group(1), refresh=refresh))
             match = _MEMORY_ROUTE.match(path)
             if match and not match.group(2):
                 return self._guarded(lambda: app.memory_map(match.group(1)))
+            if match and match.group(2) == "search":
+                return self._guarded(lambda: app.memory_search(match.group(1), (query.get("q") or [""])[0]))
             match = _JIRA_ROUTE.match(path)
             if match:
                 return self._guarded(lambda: app.jira_text(match.group(1)))
@@ -345,6 +416,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     return self._send(200, report.read_bytes(), "text/html; charset=utf-8")
                 except (SfInvestigatorError, OSError):
                     return self._error(HTTPStatus.NOT_FOUND, "No exported report for this ticket yet.")
+            match = _RESULT_ROUTE.match(path)
+            if match:
+                try:
+                    key = validate_ticket_key(match.group(1))
+                    return self._send(200, tickets.result_bundle(inv(), key), "application/zip",
+                                      download_as=f"{key}-result.zip")
+                except (SfInvestigatorError, OSError):
+                    return self._error(HTTPStatus.NOT_FOUND, "No report for this ticket yet.")
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
         do_HEAD = do_GET  # noqa: N815
@@ -354,17 +433,17 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802
             if not self._local_only():
                 return
-            body = self._body()
+            path = unquote(urlsplit(self.path).path)
+            body = self._body(MAX_UPLOAD_BODY_BYTES if path.endswith("/attachments") else MAX_BODY_BYTES)
             if body is None:
                 return
-            path = unquote(urlsplit(self.path).path)
             inv = app.investigator
             if path == "/api/demo":
                 return self._guarded(lambda: app.set_demo(bool(body.get("enabled")), reset=bool(body.get("reset"))))
             if path == "/api/tickets":
                 def create() -> dict[str, Any]:
                     request = tickets.create_ticket(inv(), body.get("text"), body.get("org"), key=body.get("key"),
-                                                    sandbox=body.get("sandbox"))
+                                                    sandbox=body.get("sandbox"), model=body.get("model"))
                     return {"ticket": request, "prompt": tickets.agent_prompt(request)}
                 return self._guarded(create)
             match = _MEMORY_ROUTE.match(path)
@@ -384,9 +463,29 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                         if key != demo.KEY or not app.demo:
                             raise InputValidationError(
                                 "The recorded sample exists only for the sample ticket DEMO-101 on the demo orgs.")
+                    if app.runner.is_running(key):
+                        raise WorkspaceError("This ticket is already being investigated.")
+                    folder = inv().workspace.ticket_dir(key)
+                    if "model" in body:
+                        tickets.set_model(folder, body.get("model"))
+                    if str(body.get("note") or "").strip():
+                        tickets.add_follow_up(inv(), key, body["note"])
                     return {"run": app.runner.start(key, runner).summary()}
 
                 return self._guarded(start)
+            if match and match.group(2) == "note":
+                return self._guarded(lambda: tickets.add_follow_up(inv(), validate_ticket_key(match.group(1)),
+                                                                   body.get("text")))
+            if match and match.group(2) == "attachments":
+                def attach() -> dict[str, Any]:
+                    key = validate_ticket_key(match.group(1))
+                    try:
+                        data = base64.b64decode(str(body.get("content_base64") or ""), validate=True)
+                    except (binascii.Error, ValueError):
+                        raise InputValidationError("The file could not be read.") from None
+                    return tickets.save_attachment(inv(), key, body.get("name"), data)
+
+                return self._guarded(attach)
             if match and match.group(2) == "cancel":
                 return self._guarded(lambda: {"cancelled": app.runner.cancel(match.group(1))})
             self._error(HTTPStatus.NOT_FOUND, "Not found.")

@@ -133,6 +133,10 @@ details{border-top:1px solid var(--line);padding:8px 0}
 details summary{cursor:pointer;font-weight:550}
 .note-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
 .note-card.stale{border-color:var(--warn)}
+textarea.short{min-height:92px;font:inherit}
+select.inline{width:auto;padding:5px 9px;font-size:13px}
+.files{display:flex;gap:6px;flex-wrap:wrap}
+.hit{border-top:1px solid var(--line);padding:9px 0}.hit:first-child{border-top:0}
 @media (max-width:860px){
   .app{grid-template-columns:minmax(0,1fr)}
   aside{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}
@@ -226,7 +230,21 @@ function classChip(classification) {
 }
 const STAGES = { new: ["", "Not started"], running: ["info", "Investigating…"], in_progress: ["warn", "In progress"],
   report: ["info", "Report written"], done: ["ok", "Done"], failed: ["bad", "Stopped with an error"],
-  cancelled: ["warn", "Stopped"], interrupted: ["warn", "Interrupted"] };
+  cancelled: ["warn", "Stopped"], interrupted: ["warn", "Interrupted"], incomplete: ["warn", "Stopped before the report"] };
+function modelSelect(id, chosen) {
+  const models = (STATUS && STATUS.models) || { "": "Claude Code's default" };
+  const fallback = STATUS && STATUS.default_model;
+  return `<select id="${id}" class="inline" title="Which Claude model investigates">${Object.entries(models).map(([value, label]) =>
+    `<option value="${esc(value)}" ${value === (chosen || "") ? "selected" : ""}>${esc(value === "" && fallback ? "Default (" + fallback + ")" : label)}</option>`).join("")}</select>`;
+}
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("The file could not be read."));
+    reader.readAsDataURL(file);
+  });
+}
 function stageChip(stage) {
   const [tone, label] = STAGES[stage] || ["", stage];
   return `<span class="chip ${tone}">${stage === "running" ? '<span class="spinner"></span>' : '<span class="dot"></span>'}${esc(label)}</span>`;
@@ -272,16 +290,18 @@ function loginCommand() {
                  custom: " --instance-url https://YOUR-DOMAIN.my.salesforce.com" };
   return `sf org login web --alias ${alias}${urls[state.loginType]}`;
 }
-async function viewStart() {
+async function viewStart(again) {
+  const fresh = again === true ? "?refresh=1" : "";
   main.innerHTML = `
     <h1>Get started</h1>
     <p class="lead">Four steps, once. After that you paste a ticket and read the answer: the root cause with its evidence, the smallest fix, and a comment ready for the ticket.</p>
     <div id="start-steps"><p class="muted"><span class="spinner"></span> Checking this computer…</p></div>`;
   await refreshStatus();
   let pre, orgs;
-  try { pre = await api("/api/prereqs"); } catch (error) { pre = { checks: [], ok: false, error }; }
-  try { orgs = await api("/api/orgs"); } catch (error) { orgs = { orgs: [], error }; }
+  try { pre = await api("/api/prereqs" + fresh); } catch (error) { pre = { checks: [], ok: false, error }; }
+  try { orgs = await api("/api/orgs" + fresh); } catch (error) { orgs = { orgs: [], error }; }
   state.orgs = orgs.orgs || [];
+  if (fresh) state.orgInfo = {};
   const required = pre.checks.filter(c => c.required);
   const toolsOk = required.length > 0 && required.filter(c => c.name !== "Authenticated org").every(c => c.ok);
   const hasOrg = state.orgs.length > 0;
@@ -345,7 +365,7 @@ async function viewStart() {
       <div><h2>The investigator itself: Claude Code</h2>
         ${STATUS.claude.available
           ? `<p>Found: <code>${esc(STATUS.claude.version || "claude")}</code>. When you submit a ticket, this page starts Claude Code in this project folder and shows its progress.</p>
-             <p class="small">Do this once: open a terminal in the project folder, run the command below, sign in if asked, and answer <b>yes</b> when it asks whether you trust this folder. Then close it.</p>${cmd("claude")}`
+             <p class="small">If you have never used Claude Code on this computer, sign in once: run the command below in a terminal, follow the sign-in, then close it.</p>${cmd("claude")}`
           : `<p>Claude Code was not found on this computer. You can still use this page: after you submit a ticket it gives you one line to paste into Claude Code, and the result appears here.</p>`}
         <p class="small muted">Mode is <b>${esc(STATUS.mode)}</b>: ${STATUS.mode === "apply"
           ? "from Claude Code the investigator may deploy to a sandbox, asking you each time. From this page it only advises."
@@ -362,8 +382,8 @@ async function viewStart() {
       </div>
     </div>`;
 
-  $("#recheck").onclick = () => viewStart();
-  const refresh = $("#orgs-refresh"); if (refresh) refresh.onclick = () => viewStart();
+  $("#recheck").onclick = () => viewStart(true);
+  const refresh = $("#orgs-refresh"); if (refresh) refresh.onclick = () => viewStart(true);
   const on = $("#demo-on"); if (on) on.onclick = async () => { on.disabled = true; await api("/api/demo", { method: "POST", body: { enabled: true } }); viewStart(); };
   const off = $("#demo-off"); if (off) off.onclick = async () => { await api("/api/demo", { method: "POST", body: { enabled: false } }); viewStart(); };
   const reset = $("#demo-reset"); if (reset) reset.onclick = async () => { await api("/api/demo", { method: "POST", body: { enabled: true, reset: true } }); toast("Demo orgs reset"); viewStart(); };
@@ -430,6 +450,8 @@ async function viewNew() {
           <div class="field" style="flex:1;min-width:170px"><label for="org">Org where it happens</label><select id="org">${options}</select><div class="small" id="org-kind" style="margin-top:6px"></div></div>
           <div class="field" style="flex:1;min-width:170px"><label for="sandbox">Sandbox for tests <span class="muted">(optional)</span></label><select id="sandbox"><option value="">None</option>${options}</select></div>
         </div>
+        <div class="row" style="margin-bottom:14px"><label for="model" style="margin:0">Model</label>${modelSelect("model", "")}
+          <span class="small muted">Sonnet is quicker and uses less of your Claude usage; the default is the most thorough.</span></div>
         <div id="new-error"></div>
         <div class="row"><button class="btn primary" id="submit" ${orgs.length ? "" : "disabled"}>Save and continue</button>
           <span class="small muted">Nothing runs until you choose how on the next page.</span></div>
@@ -478,7 +500,7 @@ async function viewNew() {
   $("#submit").onclick = async () => {
     $("#new-error").innerHTML = "";
     try {
-      const made = await api("/api/tickets", { method: "POST", body: { text: text.value, key: key.value, org: org.value, sandbox: sandbox.value } });
+      const made = await api("/api/tickets", { method: "POST", body: { text: text.value, key: key.value, org: org.value, sandbox: sandbox.value, model: $("#model").value } });
       location.hash = "#/ticket/" + encodeURIComponent(made.ticket.key);
     } catch (error) {
       $("#new-error").innerHTML = errorBox(error) + (/already exists/.test(error.message) && key.value
@@ -565,8 +587,11 @@ async function viewTicket(key) {
           <div class="row">${causeChip(t.root_cause_status)}</div>
           <div class="big prose">${t.root_cause_summary_html || esc(t.root_cause_summary || "")}</div>
           <div class="row small muted">Every claim is tied to an artifact. Open <b>Root cause</b> for the chain and <b>Evidence</b> for the files.
-            ${t.has_report_html ? `<a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/report.html" target="_blank" rel="noopener">Open printable report</a>` : ""}</div>
+            ${t.has_report_html ? `<a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/report.html" target="_blank" rel="noopener">Open printable report</a>` : ""}
+            <a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/result.zip" download>Download the result (.zip)</a></div>
           ${t.evidence_check && !t.evidence_check.ok ? `<div class="banner bad" style="margin:0">${t.evidence_check.problems.map(esc).join("<br>")}</div>` : ""}
+          ${t.open_questions_html && !/^\s*<p>\s*(none|no open questions?)\.?\s*<\/p>\s*$/i.test(t.open_questions_html) ? `<div class="banner warn" style="margin:0"><b>The investigator had questions it could not ask.</b> Answering them can turn an assumption into a confirmed fact.
+            <div class="prose small">${t.open_questions_html}</div><a href="#add-info" id="answer-link">Answer below and investigate again</a></div>` : ""}
         </div>` : ""}
 
       ${!hasResult || running ? `
@@ -576,10 +601,11 @@ async function viewTicket(key) {
             ${running ? `<button class="btn sm" id="cancel">Stop</button>` : ""}</div>
           ${running ? "" : `
             <div class="row" style="margin-bottom:12px">
-              <button class="btn primary" id="run-agent" ${STATUS.claude.available ? "" : "disabled"}>Investigate with Claude Code</button>
+              <button class="btn primary" id="run-agent" ${STATUS.claude.available ? "" : "disabled"}>${t.stage === "new" ? "Investigate with Claude Code" : "Continue with Claude Code"}</button>
+              ${STATUS.claude.available ? modelSelect("model", t.model) : ""}
               ${isSample ? `<button class="btn" id="run-sample">Replay the recorded sample</button>` : ""}
             </div>
-            ${STATUS.claude.available ? `<p class="small muted">Starts Claude Code in this project folder. It reads from the org and writes only into this ticket's folder. It cannot change the org from here: nothing is there to approve a write.</p>`
+            ${STATUS.claude.available ? `<p class="small muted">Starts Claude Code in this project folder with only the investigator's read-only tools: it reads from the org and writes into this ticket's folder. The tools that change an org are not given to it.</p>`
               : `<p class="small muted">Claude Code was not found, so this page cannot start it for you.</p>`}
             ${isSample ? `<p class="small muted"><b>Replay</b> shows a complete result in seconds without the AI: the real tools gather the evidence from the simulated org and the stored analysis is displayed.</p>` : ""}
             <details><summary>Or run it yourself in Claude Code</summary>
@@ -598,9 +624,20 @@ async function viewTicket(key) {
         <div id="tab"></div>
       </div>` : ""}
 
-      ${hasResult && !running ? `<div class="row"><button class="btn sm" id="rerun" ${STATUS.claude.available ? "" : "disabled"}>Investigate again with Claude Code</button>
-        ${isSample ? `<button class="btn sm" id="rerun-sample">Replay the sample again</button>` : ""}
-        <a class="btn sm" href="#/memory">See what was learned about the org</a></div>` : ""}`;
+      ${!running ? `
+      <div class="card" id="add-info">
+        <h2>${hasResult ? "Something to add, or an answer to a question?" : "Anything to add before it starts?"}</h2>
+        <p class="small muted">A record Id, the answer to an open question, a correction, a screenshot, an exported log. It is saved with the ticket; the next run reads it and continues from what is already there instead of starting again.</p>
+        <textarea id="note" class="short" placeholder="For example: it also happens for cases created from email, see case 500…"></textarea>
+        <div class="row" style="margin:10px 0"><label class="btn sm" for="file" style="margin:0">Attach a file</label><input type="file" id="file" hidden>
+          <span class="files" id="files">${(t.attachments || []).map(name => `<span class="chip">${esc(name)}</span>`).join("")}</span></div>
+        <div id="info-error"></div>
+        ${hasResult ? `<div class="row"><button class="btn primary sm" id="rerun" ${STATUS.claude.available ? "" : "disabled"}>Investigate again with Claude Code</button>
+          ${STATUS.claude.available ? modelSelect("model", t.model) : ""}
+          ${isSample ? `<button class="btn sm" id="rerun-sample">Replay the sample again</button>` : ""}
+          <a class="btn sm" href="#/memory">See what was learned about the org</a></div>`
+          : `<p class="small muted" style="margin:0">Then press <b>${t.stage === "new" ? "Investigate" : "Continue"} with Claude Code</b> above. If you run it yourself in Claude Code, save the note first: <button class="btn sm" id="save-note">Save the note</button></p>`}
+      </div>` : ""}`;
 
     const paintTab = () => {
       const box = $("#tab"); if (!box) return;
@@ -630,9 +667,35 @@ async function viewTicket(key) {
     const feed = $("#feed"); if (feed) feed.scrollTop = feed.scrollHeight;
 
     const start = runner => async () => {
-      try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body: { runner } }); lastStage = null; await paint(true); poll(); }
-      catch (error) { $("#ticket-error").innerHTML = errorBox(error); }
+      const body = { runner };
+      if (runner === "agent") {
+        const note = $("#note"), model = $("#model");
+        if (note && note.value.trim()) body.note = note.value;
+        if (model) body.model = model.value;
+      }
+      try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body }); lastStage = null; await paint(true); poll(); }
+      catch (error) { $("#ticket-error").innerHTML = errorBox(error); window.scrollTo(0, 0); }
     };
+    const file = $("#file");
+    if (file) file.onchange = async () => {
+      const chosen = file.files[0]; if (!chosen) return;
+      $("#info-error").innerHTML = "";
+      try {
+        const saved = await api(`/api/tickets/${encodeURIComponent(key)}/attachments`, { method: "POST", body: { name: chosen.name, content_base64: await readFile(chosen) } });
+        const name = saved.saved.split("/").pop();
+        if (![...$("#files").children].some(c => c.textContent === name)) $("#files").insertAdjacentHTML("beforeend", `<span class="chip">${esc(name)}</span>`);
+        toast("Attached " + name);
+      } catch (error) { $("#info-error").innerHTML = errorBox(error); }
+      file.value = "";
+    };
+    const saveNote = $("#save-note");
+    if (saveNote) saveNote.onclick = async () => {
+      $("#info-error").innerHTML = "";
+      try { const saved = await api(`/api/tickets/${encodeURIComponent(key)}/note`, { method: "POST", body: { text: $("#note").value } });
+            $("#note").value = ""; $("#files").insertAdjacentHTML("beforeend", `<span class="chip">${esc(saved.saved.split("/").pop())}</span>`); toast("Note saved with the ticket"); }
+      catch (error) { $("#info-error").innerHTML = errorBox(error); }
+    };
+    const answer = $("#answer-link"); if (answer) answer.onclick = event => { event.preventDefault(); $("#add-info").scrollIntoView({ behavior: "smooth" }); $("#note").focus(); };
     [["#run-agent", "agent"], ["#rerun", "agent"], ["#run-sample", "sample"], ["#rerun-sample", "sample"]].forEach(([sel, runner]) => {
       const button = $(sel); if (button) button.onclick = start(runner);
     });
@@ -717,6 +780,12 @@ async function viewMemory(orgId) {
         <div class="tile"><b>${map.counts.notes}</b><span>facts remembered</span></div>
         <div class="tile"><b>${map.tickets.length}</b><span>tickets contributed</span></div>
       </div>
+      <div class="card"><h2>Ask the memory</h2>
+        <p class="small muted" style="margin:0 0 10px">The same search the investigator runs at the start of a ticket. Type the subject of a ticket to see where it would look first.</p>
+        <div class="row"><input type="text" id="mem-q" placeholder="for example: case priority, voice call routing, renewal flow" style="flex:1;min-width:200px" autocomplete="off">
+          <button class="btn" id="mem-search">Search</button></div>
+        <div id="mem-hits" style="margin-top:10px"></div>
+      </div>
       <div class="card">
         <div class="spread"><div><h2 style="margin:0">Is it still true?</h2>
           <p class="small muted" style="margin:4px 0 0">Orgs change. Before the investigator relies on anything here, it asks the org whether each component was modified since it was learned. You can run that check now.</p></div>
@@ -756,6 +825,24 @@ async function viewMemory(orgId) {
         ${map.links.map(l => `<tr><td>${esc(l.from.split(":")[1])}</td><td class="muted">${esc(l.kind)} →</td><td>${esc(l.to.split(":")[1])}</td><td class="small muted">${l.origin === "source" ? "reading the source" : "Salesforce dependency data"}</td></tr>`).join("")}
         </tbody></table></div></div>` : ""}
       <p class="small muted">Memory is a lead, never evidence: a report can only cite what was read from the org during that investigation. Stored in <code>knowledge/</code> on this computer; it holds facts about metadata, no record data, and is never committed or uploaded.</p>`;
+    const search = async () => {
+      const words = $("#mem-q").value.trim(); if (!words) return;
+      const box = $("#mem-hits"); box.innerHTML = '<p class="muted small"><span class="spinner"></span> Searching…</p>';
+      try {
+        const found = await api(`/api/memory/${encodeURIComponent(current.org_id)}/search?q=${encodeURIComponent(words)}`);
+        const hits = [
+          ...found.notes.map(n => `<div class="hit"><span class="chip ${n.stale ? "warn" : "ok"}">${n.stale ? "Fact, needs re-reading" : "Fact"}</span> ${esc(n.text)}
+            ${n.ticket_key ? `<span class="small muted"> · learned in <a href="#/ticket/${encodeURIComponent(n.ticket_key)}">${esc(n.ticket_key)}</a></span>` : ""}</div>`),
+          ...found.components.map(c => `<div class="hit"><span class="chip">${esc(c.component.split(":")[0])}</span> <b>${esc(c.component.split(":")[1])}</b>
+            <span class="small muted"> ${esc(describeComponent(c))}</span></div>`),
+          ...(found.objects || []).map(o => `<div class="hit"><span class="chip">Object</span> <b>${esc(o.object || o.name || "")}</b>
+            <span class="small muted"> ${esc([(o.triggers || []).length ? "triggers: " + o.triggers.join(", ") : "", (o.flows || []).length ? "flows: " + o.flows.join(", ") : ""].filter(Boolean).join(" · "))}</span></div>`),
+        ];
+        box.innerHTML = hits.length ? hits.join("") : `<p class="muted small">Nothing remembered for these words. That only means no earlier ticket touched it.</p>`;
+      } catch (error) { box.innerHTML = errorBox(error); }
+    };
+    $("#mem-search").onclick = search;
+    $("#mem-q").onkeydown = event => { if (event.key === "Enter") search(); };
     $("#verify").onclick = async () => {
       const button = $("#verify"); button.disabled = true; button.innerHTML = '<span class="spinner"></span> Asking the org…';
       try { paint(await api(`/api/memory/${encodeURIComponent(current.org_id)}/verify`, { method: "POST" })); }
@@ -772,7 +859,7 @@ async function viewSafety() {
     <h1>How it stays safe</h1>
     <p class="lead">The investigator is built so that the worst it can do by mistake is be wrong on paper.</p>
     <div class="card"><h2>Production is read-only</h2><p>Before every write, the org is asked what it is. Anything that is not provably a sandbox, a scratch org or a Developer Edition org counts as production, and writes to production are refused in code. There is no setting, option or instruction that changes this.</p></div>
-    <div class="card"><h2>Every change needs you</h2><p>In Claude Code, each tool that changes an org asks for your approval with its exact arguments. From this page nothing can be approved, so nothing can be changed: investigations started here only read, and hand you the fix as a diff.</p></div>
+    <div class="card"><h2>Every change needs you</h2><p>In Claude Code, each tool that changes an org asks for your approval with its exact arguments. Investigations started from this page are not given those tools at all, nor a shell or web access: they only read, and hand you the fix as a diff.</p></div>
     <div class="card"><h2>Evidence, or it says so</h2><p>Every claim about the cause must point to a file and line, a saved query result or a debug log line. A checker verifies that each of those exists before a report is shown as passed. What cannot be proven is labelled <b>Hypothesis</b>, and a cause that cannot be confirmed is reported as <b>Not confirmed</b> with what is missing.</p></div>
     <div class="card"><h2>Your data stays here</h2><p>Query results are saved with personal data redacted. Reports and comments use record Ids, not names. Tickets, evidence and the org memory live in folders on this computer that are never committed or uploaded. Nothing is posted to your ticket system: you get a draft.</p></div>
     <div class="card"><h2>This page</h2><p>It answers only on this computer (<code>127.0.0.1</code>). It has no button, and no hidden route, that changes a Salesforce org.</p></div>

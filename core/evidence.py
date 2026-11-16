@@ -48,6 +48,15 @@ def _query_entry(rel: str, data: Any) -> dict[str, Any]:
                 + (f"; first failure: {failures[0].get('name')}" if failures else "")
             ),
         }
+    if "tool" in data and "result" in data and "query" not in data:
+        asked = data.get("asked") if isinstance(data.get("asked"), dict) else {}
+        about = ", ".join(f"{k} {v}" for k, v in asked.items() if isinstance(v, (str, int)) and k != "limit")
+        return {
+            "kind": "tool_result",
+            "cite": f"`{rel}`",
+            "description": _one_line(f"Answer of {data.get('tool')} from {data.get('org')} at "
+                                     f"{data.get('executed_at')}" + (f": {about}" if about else "")),
+        }
     records = data.get("records") if isinstance(data.get("records"), list) else []
     rows = data.get("total_size") if not records and isinstance(data.get("total_size"), int) else len(records)
     return {
