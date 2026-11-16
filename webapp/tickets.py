@@ -151,7 +151,12 @@ def ticket_status(inv: Investigator, key: str, run: dict[str, Any] | None = None
     request = read_request(folder)
     ticket_md = folder / "ticket.md"
     report_md = folder / "report.md"
-    intake_done = ticket_md.is_file() and "<title>" not in ticket_md.read_text(encoding="utf-8", errors="replace")[:200]
+    # The file may be read at the very moment it is being rewritten (empty for an instant).
+    try:
+        ticket_text = ticket_md.read_text(encoding="utf-8", errors="replace") if ticket_md.is_file() else ""
+    except OSError:
+        ticket_text = ""
+    intake_done = bool(ticket_text.strip()) and "<title>" not in ticket_text[:200]
     queries = _count(folder / "queries", "*.json")
     logs = _count(folder / "logs", "*.log")
     sources = sum(1 for p in (folder / "metadata" / "force-app").rglob("*")
@@ -161,7 +166,7 @@ def ticket_status(inv: Investigator, key: str, run: dict[str, Any] | None = None
 
     title = request.get("title")
     if intake_done:
-        first = ticket_md.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+        first = ticket_text.lstrip().splitlines()[0]
         if first.startswith("# "):
             title = first[2:].split(":", 1)[-1].strip() or title
 

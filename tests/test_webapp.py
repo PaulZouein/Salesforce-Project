@@ -528,6 +528,19 @@ def test_status_follows_the_files_when_claude_code_is_used_directly(web, project
     assert done["ticket_html"].startswith("<h1>DEMO-101")
 
 
+def test_status_survives_reading_a_file_while_it_is_being_rewritten(web, project):
+    submit(web)
+    folder = project.ticket("DEMO-101")
+    for content in ("", "   \n", "\n\n# DEMO-101: title on a later line\n"):
+        (folder / "ticket.md").write_text(content)
+        status, detail = web.get("/api/tickets/DEMO-101")
+        assert status == 200 and "stage" in detail
+    (folder / "report.md").write_text("")
+    (folder / "comment.md").write_text("")
+    status, detail = web.get("/api/tickets/DEMO-101")
+    assert status == 200 and detail["evidence_check"]["ok"] is False
+
+
 def test_a_report_that_fails_the_evidence_check_is_shown_as_failing(web, project):
     submit(web)
     inv = web.app.investigator()
