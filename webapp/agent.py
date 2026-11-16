@@ -276,11 +276,11 @@ class Runner:
         run = self.runs.get(key)
         if not run or run.status != "running":
             return False
+        run.add({"kind": "warn", "label": "Stopped by you"})
         run.status = "cancelled"
         if run.process and run.process.poll() is None:
             from core.sf_cli import _kill_tree
             _kill_tree(run.process)
-        run.add({"kind": "warn", "label": "Stopped by you"})
         run.finish("cancelled")
         return True
 
@@ -363,13 +363,13 @@ class Runner:
                 if "has not been trusted" in line and run.status == "running":
                     # Without trust, Claude Code ignores the project's allow list, so every investigator
                     # tool would be refused. Stop now and say how to fix it, rather than produce nothing.
-                    run.status = "failed"
-                    from core.sf_cli import _kill_tree
-                    _kill_tree(process)
                     run.add({"kind": "error", "label": "Claude Code has not been used in this folder yet",
                              "detail": "Open a terminal in the project folder, run 'claude' once and accept the "
                                        "question about trusting the folder. Then come back and start the "
                                        "investigation again. This is asked once per computer."})
+                    run.status = "failed"
+                    from core.sf_cli import _kill_tree
+                    _kill_tree(process)
                     run.finish("failed")
 
         threading.Thread(target=drain_stderr, daemon=True).start()
@@ -401,10 +401,11 @@ class Runner:
     def _time_out(self, run: Run) -> None:
         if run.status != "running":
             return
+        # Record why before the status changes, so nobody sees "failed" without the reason.
+        run.add({"kind": "error", "label": "Stopped: the investigation ran longer than the time limit",
+                 "detail": f"{int(self._timeout // 60)} minutes. What was written so far is kept."})
         run.status = "failed"
         if run.process and run.process.poll() is None:
             from core.sf_cli import _kill_tree
             _kill_tree(run.process)
-        run.add({"kind": "error", "label": "Stopped: the investigation ran longer than the time limit",
-                 "detail": f"{int(self._timeout // 60)} minutes. What was written so far is kept."})
         run.finish("failed")

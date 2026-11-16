@@ -482,7 +482,8 @@ def test_time_limit_stops_a_run(project, fake_claude, monkeypatch, tmp_path):
     deadline = time.time() + 30
     while run.status == "running" and time.time() < deadline:
         time.sleep(0.1)
-    assert run.status == "failed" and "time limit" in run.events[-1]["label"]
+    # The reason is recorded before the status changes, so it is there as soon as the run reads "failed".
+    assert run.status == "failed" and any("time limit" in e["label"] for e in run.events)
 
 
 def test_interrupted_run_is_reported_after_a_restart(project, tmp_path):
