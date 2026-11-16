@@ -626,8 +626,8 @@ async function viewTicket(key) {
 
       ${!running ? `
       <div class="card" id="add-info">
-        <h2>${hasResult ? "Something to add, or an answer to a question?" : "Anything to add before it starts?"}</h2>
-        <p class="small muted">A record Id, the answer to an open question, a correction, a screenshot, an exported log. It is saved with the ticket; the next run reads it and continues from what is already there instead of starting again.</p>
+        <h2>Add information</h2>
+        <p class="small muted">${hasResult ? "Something to add, or an answer to a question?" : "Anything to add before it starts?"} A record Id, a correction, a screenshot, an exported log. It is saved with the ticket; the next run reads it and continues from what is already there instead of starting again.</p>
         <textarea id="note" class="short" placeholder="For example: it also happens for cases created from email, see case 500…"></textarea>
         <div class="row" style="margin:10px 0"><label class="btn sm" for="file" style="margin:0">Attach a file</label><input type="file" id="file" hidden>
           <span class="files" id="files">${(t.attachments || []).map(name => `<span class="chip">${esc(name)}</span>`).join("")}</span></div>

@@ -1,0 +1,4 @@
+# The start scripts must keep the line endings of the system they run on, whatever system commits them.
+*.bat text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf
