@@ -14,68 +14,18 @@ from typing import Any
 from core.app import Investigator
 from core.errors import SfInvestigatorError
 
-from .conftest import FIX_COMPONENTS, SERVICE, SERVICE_TEST, apply_planted_bug_fix
-
-KEY = "DEMO-101"
-PROD, SANDBOX = "demo-prod", "demo-sandbox"
-LOG_ID = "07LWs00000L0001MAA"
-FLOW = "metadata/force-app/main/default/flows/Case_Premium_Notification.flow-meta.xml"
-WRONG_CASES = ["500Ws00000C0003IAA", "500Ws00000C0004IAA", "500Ws00000C0006IAA"]
-
-CASES_QUERY = (
-    "SELECT Id, CaseNumber, Priority, Origin, AccountId, Account.Support_Tier__c, CreatedById, CreatedDate "
-    "FROM Case WHERE CreatedDate >= 2026-11-09T00:00:00Z ORDER BY CreatedDate, CaseNumber"
+from simulator import demo
+from simulator.demo import (  # noqa: F401 - re-exported for the tests
+    CASES_QUERY, FLOW, KEY, LOG_ID, NOT_HIGH_QUERY, PROD, SANDBOX, SERVICE, SERVICE_TEST, WRONG_CASES,
+    apply_planted_bug_fix,
 )
-NOT_HIGH_QUERY = (
-    "SELECT Id, CaseNumber, Priority, CreatedDate FROM Case WHERE Priority != 'High' "
-    "AND Account.Support_Tier__c = 'Premium' ORDER BY CaseNumber"
-)
+
+from .conftest import FIX_COMPONENTS
 
 
 def investigate(inv: Investigator, ticket_dir: Path) -> dict[str, Any]:
     """Replay the investigation. Returns the tool results the report is built on."""
-    out: dict[str, Any] = {}
-    out["config"] = inv.get_config()
-    out["init"] = inv.init_ticket(KEY)
-    out["prod"] = inv.org_info(PROD)
-    out["sandbox"] = inv.org_info(SANDBOX)
-    out["earlier_tickets"] = inv.search_tickets("Premium")
-
-    out["cases"] = inv.soql_query(PROD, CASES_QUERY, ticket_key=KEY, save_as="cases-since-9-nov")
-    out["automation"] = inv.describe_object(PROD, "Case", include=["automation"])["automation"]
-    out["retrieve"] = inv.retrieve_components(PROD, KEY, [
-        "ApexTrigger:CaseTrigger", "ApexClass:CaseTriggerHandler", "ApexClass:CaseEscalationService",
-        "ApexClass:CaseEscalationServiceTest", "Flow:Case_Premium_Notification"])
-    out["scan"] = inv.scan_apex(KEY)
-    out["service"] = inv.read_file(KEY, SERVICE, start_line=26, end_line=33)
-    out["flow"] = inv.summarize_flow(KEY, FLOW)
-    out["changes"] = inv.recent_org_changes(PROD, "2026-11-03", until="2026-11-12T23:59:59Z")
-    out["audit_trail"] = inv.soql_query(
-        PROD, "SELECT Action, Section, Display, CreatedDate, CreatedById FROM SetupAuditTrail "
-              "WHERE CreatedDate >= 2026-11-03T00:00:00Z ORDER BY CreatedDate",
-        ticket_key=KEY, save_as="setup-audit-trail")
-    out["class_dates"] = inv.soql_query(
-        PROD, "SELECT Name, LastModifiedDate, LastModifiedById FROM ApexClass WHERE Name LIKE 'Case%' ORDER BY Name",
-        tooling=True, ticket_key=KEY, save_as="apex-class-last-modified")
-    out["flow_versions"] = inv.soql_query(
-        PROD, "SELECT Id, VersionNumber, Status, LastModifiedDate FROM Flow ORDER BY LastModifiedDate",
-        tooling=True, ticket_key=KEY, save_as="flow-versions")
-    out["logs"] = inv.list_debug_logs(PROD)
-    out["log"] = inv.get_debug_log(PROD, LOG_ID, KEY, grep=r"STATEMENT_EXECUTE\|\[(2[6-9]|3[0-3])\]|FLOW_RULE_DETAIL")
-    out["log_analysis"] = inv.analyze_debug_log(KEY, out["log"]["saved_to"])
-    out["dependencies"] = inv.find_dependencies(PROD, "CaseEscalationService")
-    out["callers"] = inv.search_metadata(KEY, r"applyPremiumPriority\(", glob="*.cls")
-    out["tests"] = inv.run_apex_tests(SANDBOX, ["CaseEscalationServiceTest"], ticket_key=KEY)
-    out["sandbox_class_dates"] = inv.soql_query(
-        SANDBOX, "SELECT Name, LastModifiedDate FROM ApexClass WHERE Name LIKE 'Case%' ORDER BY Name",
-        tooling=True, ticket_key=KEY, save_as="sandbox-apex-class-last-modified")
-    out["mixed_batch_test_before_fix"] = inv.search_metadata(KEY, "mixedBatch|List<Case>\\{", glob="*Test.cls")
-    out["not_high"] = inv.soql_query(PROD, NOT_HIGH_QUERY, ticket_key=KEY, save_as="premium-cases-not-high")
-
-    apply_planted_bug_fix(ticket_dir)
-    out["diff"] = inv.workspace_diff(KEY)
-    out["evidence"] = inv.evidence_index(KEY)
-    return out
+    return demo.gather_evidence(inv, ticket_dir)
 
 
 _NORMALIZE = [

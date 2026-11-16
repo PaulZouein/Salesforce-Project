@@ -81,17 +81,10 @@ ul,ol{padding-left:24px}li{margin:3px 0}
 <p><strong>Existing records.</strong> A code fix does not repair the three cases already saved with the wrong priority (E2): 500Ws00000C0003IAA, 500Ws00000C0004IAA, 500Ws00000C0006IAA. This is a data correction, proposed separately from the code change: set Priority to High on those three cases after confirming with the support lead that none was deliberately lowered. Re-run the query of E2 first, because imports before the fix can add more.</p>
 <h2>Test results</h2>
 <ul>
-<li><strong>Existing tests, <code>demo-sandbox</code>:</strong> <code>CaseEscalationServiceTest</code>, 2 tests, both pass (E17). They</li>
+<li><strong>Existing tests, <code>demo-sandbox</code>:</strong> <code>CaseEscalationServiceTest</code>, 2 tests, both pass (E17). They pass with the defect present because neither covers a mixed batch (E19). That gap is how the defect reached production unnoticed by the test suite.</li>
+<li><strong>New test:</strong> <code>mixedBatchEscalatesEveryPremiumCase</code> inserts a Standard-account case followed by a Premium-account case in one statement and asserts Medium and High. It was not run: the tool is in advise mode, and the simulated org does not execute Apex.</li>
+<li><strong>Reproduction:</strong> not executed in the sandbox for the same reasons. The failing behaviour is taken from the production debug log (E8 to E12) rather than from a new run.</li>
 </ul>
-<p>pass with the defect present because neither covers a mixed batch (E19). That gap is how the defect reached production unnoticed by the test suite.</p>
-<ul>
-<li><strong>New test:</strong> <code>mixedBatchEscalatesEveryPremiumCase</code> inserts a Standard-account case followed by</li>
-</ul>
-<p>a Premium-account case in one statement and asserts Medium and High. It was not run: the tool is in advise mode, and the simulated org does not execute Apex.</p>
-<ul>
-<li><strong>Reproduction:</strong> not executed in the sandbox for the same reasons. The failing behaviour is</li>
-</ul>
-<p>taken from the production debug log (E8 to E12) rather than from a new run.</p>
 <p>Test plan after you deploy to the sandbox:</p>
 <ol>
 <li>Run <code>CaseEscalationServiceTest</code>: expect 3 passing tests. Without the code change, the new test fails on its second assertion.</li>
@@ -102,18 +95,14 @@ ul,ol{padding-left:24px}li{margin:3px 0}
 <h2>Risks</h2>
 <ul>
 <li><strong>Low code risk.</strong> One statement; no signature, query or DML changes.</li>
-<li><strong>More cases become High</strong> than in the last days, which is the intended rule, so more</li>
-</ul>
-<p>notifications are sent by the flow.</p>
-<ul>
+<li><strong>More cases become High</strong> than in the last days, which is the intended rule, so more notifications are sent by the flow.</li>
 <li><strong>Data already affected</strong> stays wrong until the separate data correction is done.</li>
-<li><strong>Until the fix is in production,</strong> every nightly import that mixes tiers adds wrong cases. The</li>
+<li><strong>Until the fix is in production,</strong> every nightly import that mixes tiers adds wrong cases. The manual morning correction has to continue until then.</li>
 </ul>
-<p>manual morning correction has to continue until then.</p>
 <h2>Open questions</h2>
 <ol>
 <li><strong>Did the 9 November change introduce the <code>return</code>?</strong> The class was modified on 9 November 16:42, the evening before the first failing import (E13, E14). <strong>Hypothesis:</strong> that change introduced the early return. It is not confirmed: the org holds only the current version of the class. To confirm it, compare with the previous version in your source control or deployment history. The root cause above does not depend on the answer.</li>
 <li><strong>Are older mixed-batch inserts affected?</strong> The queries cover cases created since 9 November. If other bulk loads into Case ran since the class changed, widen the query of E2.</li>
 <li><strong>Sandbox equality.</strong> E18 compares last-modified dates, not source text. Retrieve the service from <code>demo-sandbox</code> before deploying if the sandbox was refreshed or edited recently; the deploy tool also checks for drift.</li>
 </ol>
-<footer>Generated 2026-11-15 11:57 UTC from report.md. Local file: not posted anywhere.</footer></main></body></html>
+<footer>Generated 2026-11-15 22:27 UTC from report.md. Local file: not posted anywhere.</footer></main></body></html>

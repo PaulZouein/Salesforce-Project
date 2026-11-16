@@ -332,3 +332,9 @@ def test_list_and_search_tickets(ticket, inv, project):
     for bad in ("", "(", "x" * 301):
         with pytest.raises(InputValidationError):
             inv.search_tickets(bad)
+
+
+def test_wrapped_list_items_stay_one_item():
+    html = markdown_to_html("- **First:** starts here\n  and continues on the next line.\n- Second\n\n1. One\n   still one.\n2. Two")
+    assert "<li><strong>First:</strong> starts here and continues on the next line.</li>" in html
+    assert "<li>One still one.</li>" in html and html.count("<p>") == 0

@@ -45,23 +45,7 @@ def demo(demo_sim, project):
     return inv, results
 
 
-def with_replayed_citations(text: str, ticket_dir: Path) -> str:
-    """Point the stored report's saved-query citations at the files of this replay (new timestamps)."""
-    by_slug = {re.sub(r"^\d{8}-\d{6}-", "", p.name): p.name for p in (ticket_dir / "queries").glob("*.json")}
-
-    def swap(match: re.Match) -> str:
-        name = match.group(1)
-        assert name in by_slug, f"the replay did not save {name}"
-        return "queries/" + by_slug[name]
-
-    return re.sub(r"queries/\d{8}-\d{6}-([A-Za-z0-9\-]+\.json)", swap, text)
-
-
-def install_expected(ticket_dir: Path) -> None:
-    for name in ("ticket.md", "comment.md"):
-        shutil.copyfile(EXPECTED / name, ticket_dir / name)
-    report = with_replayed_citations((EXPECTED / "report.md").read_text(encoding="utf-8"), ticket_dir)
-    (ticket_dir / "report.md").write_text(report, encoding="utf-8")
+install_expected = demo_flow.demo.install_expected
 
 
 # --- the investigation ------------------------------------------------------------------

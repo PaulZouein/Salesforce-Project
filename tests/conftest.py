@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 from core.app import Investigator  # noqa: E402
 from core.sf_cli import ProcessResult, SfCli  # noqa: E402
 from simulator.build import build_state  # noqa: E402
+from simulator.demo import MIXED_BATCH_TEST, apply_planted_bug_fix  # noqa: E402,F401
 
 #: The simulator hands this out as an access token; it must never reach a tool result.
 SIMULATED_TOKEN = "00D-SIMULATED-TOKEN-THAT-MUST-NEVER-BE-SHOWN"
@@ -48,29 +49,6 @@ TEST_ORGS: list[dict[str, Any]] = [
 SERVICE = "metadata/force-app/main/default/classes/CaseEscalationService.cls"
 SERVICE_TEST = "metadata/force-app/main/default/classes/CaseEscalationServiceTest.cls"
 FIX_COMPONENTS = ["ApexClass:CaseEscalationService", "ApexClass:CaseEscalationServiceTest"]
-
-MIXED_BATCH_TEST = '''
-    @isTest
-    static void mixedBatchEscalatesEveryPremiumCase() {
-        Account standard = createAccount('Standard Test Account', 'Standard');
-        Account premium = createAccount('Premium Test Account', 'Premium');
-
-        Test.startTest();
-        List<Case> batch = new List<Case>{
-            new Case(Subject = 'Standard first', AccountId = standard.Id, Priority = 'Medium'),
-            new Case(Subject = 'Premium second', AccountId = premium.Id, Priority = 'Medium')
-        };
-        insert batch;
-        Test.stopTest();
-
-        Map<Id, Case> saved = new Map<Id, Case>([SELECT Priority FROM Case WHERE Id IN :batch]);
-        System.assertEquals('Medium', saved.get(batch[0].Id).Priority, 'A Standard case keeps its priority');
-        System.assertEquals('High', saved.get(batch[1].Id).Priority,
-            'Every Premium case in a mixed batch should be High');
-    }
-}
-'''
-
 
 class Sim:
     """A simulator state folder and its ``sf`` launcher."""
@@ -166,17 +144,3 @@ class RecordingRunner:
 @pytest.fixture
 def recording_runner() -> type[RecordingRunner]:
     return RecordingRunner
-
-
-def apply_planted_bug_fix(ticket_dir: Path) -> None:
-    """Make the DEMO-101 fix in a ticket workspace: ``return;`` -> ``continue;`` plus the new test."""
-    service = ticket_dir / SERVICE
-    lines = service.read_text(encoding="utf-8").split("\n")
-    assert lines[29].strip() == "return;", lines[29]
-    lines[29] = lines[29].replace("return;", "continue;")
-    service.write_text("\n".join(lines), encoding="utf-8")
-
-    test_class = ticket_dir / SERVICE_TEST
-    text = test_class.read_text(encoding="utf-8").rstrip()
-    assert text.endswith("}")
-    test_class.write_text(text[:-1].rstrip() + "\n" + MIXED_BATCH_TEST, encoding="utf-8")

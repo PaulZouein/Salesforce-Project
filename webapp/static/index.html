@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Salesforce Ticket Investigator</title>
+<style>
+:root{
+  --bg:#f6f4ef;--panel:#ffffff;--ink:#1c1b19;--muted:#6a675f;--line:#e3dfd6;--soft:#efece5;
+  --accent:#0b6e4f;--accent-ink:#ffffff;--accent-soft:#e2f2ea;
+  --warn:#9a5b00;--warn-soft:#fbefd6;--bad:#a8322b;--bad-soft:#fbe5e2;--info:#1f5fa8;--info-soft:#e3eefb;
+  --code:#f1eee7;--add:#e1f4e7;--del:#fbe4e1;--shadow:0 1px 2px rgba(20,18,12,.06),0 6px 20px rgba(20,18,12,.05);
+  --radius:12px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#141412;--panel:#1d1d1a;--ink:#eceae4;--muted:#a19e95;--line:#33322d;--soft:#252521;
+  --accent:#5fd0a5;--accent-ink:#0c1f17;--accent-soft:#173326;
+  --warn:#f0b75a;--warn-soft:#3a2c12;--bad:#f08a80;--bad-soft:#3f1f1c;--info:#8ab8f0;--info-soft:#17293f;
+  --code:#262622;--add:#16351f;--del:#40201d;--shadow:0 1px 2px rgba(0,0,0,.4);
+}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--accent)}
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:22px 14px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:6px}
+.brand{display:flex;gap:10px;align-items:center;padding:2px 8px 16px}
+.brand .mark{width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:700}
+.brand b{display:block;line-height:1.15}
+.brand small{color:var(--muted);font-size:12px}
+nav a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;color:var(--ink);text-decoration:none;font-weight:500}
+nav a:hover{background:var(--soft)}
+nav a.on{background:var(--accent-soft);color:var(--accent)}
+nav a .n{margin-left:auto;font-size:12px;color:var(--muted);background:var(--soft);border-radius:999px;padding:0 8px}
+.side-foot{margin-top:auto;display:grid;gap:8px;padding:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12.5px;background:var(--panel);white-space:nowrap}
+.chip.ok{color:var(--accent);border-color:transparent;background:var(--accent-soft)}
+.chip.warn{color:var(--warn);border-color:transparent;background:var(--warn-soft)}
+.chip.bad{color:var(--bad);border-color:transparent;background:var(--bad-soft)}
+.chip.info{color:var(--info);border-color:transparent;background:var(--info-soft)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+main{padding:30px clamp(16px,4vw,44px) 80px;max-width:1120px;width:100%;min-width:0}
+h1{overflow-wrap:anywhere}
+h1{font-size:1.65rem;line-height:1.2;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:1.08rem;margin:0 0 10px}
+h3{font-size:.98rem;margin:18px 0 6px}
+.lead{color:var(--muted);margin:0 0 24px;max-width:70ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:16px}
+.card.flat{box-shadow:none}
+.grid2{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;align-items:start}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.spread{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:8px 14px;cursor:pointer;font-weight:550;text-decoration:none;color:var(--ink);display:inline-flex;gap:8px;align-items:center}
+.btn:hover{background:var(--soft)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.danger{color:var(--bad)}
+.btn.ghost{border-color:transparent;background:transparent;padding:6px 8px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:4px 10px;font-size:13px}
+label{font-weight:550;font-size:13.5px;display:block;margin:0 0 5px}
+input[type=text],select,textarea{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:9px 11px}
+textarea{min-height:300px;resize:vertical;font:13.5px/1.5 var(--mono)}
+input:focus,select:focus,textarea:focus,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.field{margin-bottom:14px}
+code,.mono{font-family:var(--mono);font-size:.9em}
+code{background:var(--code);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
+.cmd{display:flex;gap:8px;align-items:stretch;background:var(--code);border-radius:9px;padding:8px 8px 8px 12px;margin:6px 0;font:13px/1.5 var(--mono)}
+.cmd span{flex:1;overflow-wrap:anywhere;white-space:pre-wrap;align-self:center}
+.step{display:grid;grid-template-columns:38px minmax(0,1fr);gap:14px}
+.step .num{width:32px;height:32px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-weight:700;color:var(--muted);background:var(--panel)}
+.step.done .num{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.step.todo .num{border-color:var(--warn);color:var(--warn)}
+.checks{list-style:none;margin:0;padding:0}
+.checks li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.checks li:first-child{border-top:0}
+.mark-ok{color:var(--accent)}.mark-bad{color:var(--bad)}.mark-warn{color:var(--warn)}.mark-wait{color:var(--muted)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:transparent;padding:6px 12px;cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-top:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-top:0;font-weight:600}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--soft)}
+.tablewrap{overflow-x:auto}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:0 0 16px;overflow-x:auto}
+.tabs button{border:0;background:transparent;padding:9px 12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--muted);font-weight:550;white-space:nowrap}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.feed{list-style:none;margin:0;padding:0;max-height:440px;overflow:auto}
+.feed li{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;padding:6px 0;font-size:14px}
+.feed .d{color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
+.feed .note{color:var(--muted);font-style:italic}
+.spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;display:inline-block;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
+.banner{border-radius:10px;padding:10px 14px;margin:0 0 16px;font-size:14px}
+.banner.info{background:var(--info-soft);color:var(--info)}
+.banner.warn{background:var(--warn-soft);color:var(--warn)}
+.banner.bad{background:var(--bad-soft);color:var(--bad)}
+.banner.ok{background:var(--accent-soft);color:var(--accent)}
+.verdict{display:grid;gap:10px}
+.verdict .big{font-size:1.12rem;line-height:1.45}
+.verdict .big p{margin:0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile b{display:block;font-size:1.5rem;line-height:1.1}
+.tile span{color:var(--muted);font-size:13px}
+.prose h1{font-size:1.3rem}.prose h2{font-size:1.05rem;margin-top:22px;padding-top:12px;border-top:1px solid var(--line)}
+.prose h2:first-child{border-top:0;padding-top:0;margin-top:0}
+.prose p{margin:9px 0}.prose ul,.prose ol{padding-left:22px}.prose li{margin:3px 0}
+.prose pre{background:var(--code);padding:12px;border-radius:9px;overflow-x:auto;font:12.5px/1.5 var(--mono)}
+.prose pre code{background:none;padding:0}
+.prose table{font-size:13.5px;margin:10px 0;display:block;overflow-x:auto}
+.prose td,.prose th{border:1px solid var(--line)}
+.prose th{background:var(--soft);text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)}
+.prose td:has(>code:only-child){min-width:15rem}
+.prose blockquote{margin:10px 0;padding:8px 14px;border-left:3px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0;color:var(--muted)}
+.prose .add{background:var(--add);display:block}.prose .del{background:var(--del);display:block}.prose .hunk{color:var(--muted);display:block}
+pre.diff{background:var(--code);padding:12px;border-radius:9px;overflow-x:auto;font:12.5px/1.5 var(--mono);margin:0}
+pre.diff .add{background:var(--add);display:block}pre.diff .del{background:var(--del);display:block}
+pre.diff .hunk,pre.diff .file{color:var(--muted);display:block}
+pre.plain{white-space:pre-wrap;background:var(--code);padding:12px;border-radius:9px;font:13px/1.5 var(--mono);margin:0;overflow-wrap:anywhere}
+.empty{text-align:center;color:var(--muted);padding:34px 10px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:9px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;font-size:14px}
+.kv dt{color:var(--muted)}.kv dd{margin:0;overflow-wrap:anywhere}
+details{border-top:1px solid var(--line);padding:8px 0}
+details summary{cursor:pointer;font-weight:550}
+.note-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.note-card.stale{border-color:var(--warn)}
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  aside{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}
+  .brand{padding:0 6px 0 0}.brand small{display:none}
+  nav{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0}nav a{white-space:nowrap;padding:7px 9px}nav a .n{display:none}
+  .side-foot{display:none}.grid2{grid-template-columns:1fr}
+  main{padding:20px 16px 60px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand"><div class="mark">TI</div><div><b>Ticket Investigator</b><small>Salesforce · root cause with evidence</small></div></div>
+    <nav id="nav">
+      <a href="#/start" data-view="start">Get started</a>
+      <a href="#/new" data-view="new">New ticket</a>
+      <a href="#/tickets" data-view="tickets">Tickets <span class="n" id="nav-count">0</span></a>
+      <a href="#/memory" data-view="memory">Org memory</a>
+      <a href="#/safety" data-view="safety">How it stays safe</a>
+    </nav>
+    <div class="side-foot" id="side-foot"></div>
+  </aside>
+  <main id="main"><p class="muted">Loading…</p></main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+const TOKEN = "__SFTI_TOKEN__";
+const $ = (sel, root) => (root || document).querySelector(sel);
+const main = $("#main");
+let STATUS = null;
+let pollTimer = null;
+const state = { orgs: [], orgInfo: {}, ticketTab: "cause", loginType: "sandbox", loginAlias: "my-sandbox" };
+
+function esc(value) {
+  return String(value === null || value === undefined ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+async function api(path, options) {
+  const init = Object.assign({ headers: {} }, options || {});
+  if (init.body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.headers["X-SFTI-Token"] = TOKEN;
+    init.body = JSON.stringify(init.body);
+  } else if (init.method && init.method !== "GET") {
+    init.headers["Content-Type"] = "application/json";
+    init.headers["X-SFTI-Token"] = TOKEN;
+    init.body = "{}";
+  }
+  let response;
+  try { response = await fetch(path, init); }
+  catch (error) { throw new Error("The interface is not answering. Is 'python -m webapp' still running?"); }
+  const data = await response.json().catch(() => ({ ok: false, error: { message: "Unexpected answer from the server." } }));
+  if (!data.ok) {
+    const error = new Error((data.error && data.error.message) || "Something went wrong.");
+    error.hint = data.error && data.error.hint;
+    error.code = data.error && data.error.code;
+    throw error;
+  }
+  return data;
+}
+function toast(text) {
+  const el = $("#toast"); el.textContent = text; el.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("show"), 1800);
+}
+async function copyText(text, what) {
+  try { await navigator.clipboard.writeText(text); toast((what || "Copied") + " to the clipboard"); }
+  catch (error) {
+    const area = document.createElement("textarea"); area.value = text; document.body.appendChild(area);
+    area.select(); document.execCommand("copy"); area.remove(); toast((what || "Copied") + " to the clipboard");
+  }
+}
+function cmd(text) {
+  return `<div class="cmd"><span>${esc(text)}</span><button class="btn sm" data-copy="${esc(text)}">Copy</button></div>`;
+}
+function errorBox(error) {
+  return `<div class="banner bad"><b>${esc(error.message)}</b>${error.hint ? "<br>" + esc(error.hint) : ""}</div>`;
+}
+function when(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return isNaN(date) ? esc(iso) : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+function classChip(classification) {
+  const map = { production: ["bad", "Production · read-only"], sandbox: ["ok", "Sandbox"], scratch: ["ok", "Scratch org"],
+                developer: ["info", "Developer Edition"] };
+  const [tone, label] = map[classification] || ["", classification || "checking…"];
+  return `<span class="chip ${tone}"><span class="dot"></span>${esc(label)}</span>`;
+}
+const STAGES = { new: ["", "Not started"], running: ["info", "Investigating…"], in_progress: ["warn", "In progress"],
+  report: ["info", "Report written"], done: ["ok", "Done"], failed: ["bad", "Stopped with an error"],
+  cancelled: ["warn", "Stopped"], interrupted: ["warn", "Interrupted"] };
+function stageChip(stage) {
+  const [tone, label] = STAGES[stage] || ["", stage];
+  return `<span class="chip ${tone}">${stage === "running" ? '<span class="spinner"></span>' : '<span class="dot"></span>'}${esc(label)}</span>`;
+}
+function causeChip(status) {
+  if (!status) return "";
+  const confirmed = /^confirmed/i.test(status.trim());
+  return `<span class="chip ${confirmed ? "ok" : "warn"}"><span class="dot"></span>Root cause: ${esc(status)}</span>`;
+}
+
+/* ---------- shell ---------- */
+async function refreshStatus() {
+  STATUS = await api("/api/status");
+  $("#nav-count").textContent = STATUS.tickets;
+  $("#side-foot").innerHTML = [
+    `<span class="chip ${STATUS.mode === "apply" ? "warn" : "ok"}" title="Set in sfti.config.json">Mode: ${esc(STATUS.mode)}</span>`,
+    STATUS.demo ? `<span class="chip info">Demo orgs (simulated)</span>` : `<span class="chip">Your Salesforce CLI</span>`,
+    STATUS.claude.available ? `<span class="chip ok">Claude Code found</span>` : `<span class="chip warn">Claude Code not found</span>`,
+  ].join("");
+  return STATUS;
+}
+function route() {
+  clearInterval(pollTimer); pollTimer = null;
+  const hash = location.hash || "#/start";
+  const parts = hash.replace(/^#\//, "").split("/");
+  const view = (parts[0] || "start").split("?")[0];
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.dataset.view === (view === "ticket" ? "tickets" : view)));
+  const views = { start: viewStart, new: viewNew, tickets: viewTickets, ticket: () => viewTicket(decodeURIComponent(parts[1] || "")),
+                  memory: () => viewMemory(parts[1]), safety: viewSafety };
+  (views[view] || viewStart)().catch(error => { main.innerHTML = errorBox(error); });
+  window.scrollTo(0, 0);
+}
+document.addEventListener("click", event => {
+  const copy = event.target.closest("[data-copy]");
+  if (copy) { copyText(copy.dataset.copy, "Copied"); }
+});
+window.addEventListener("hashchange", route);
+
+/* ---------- Get started ---------- */
+function loginCommand() {
+  const alias = (state.loginAlias || "my-org").replace(/[^A-Za-z0-9._@+-]/g, "-");
+  const urls = { sandbox: " --instance-url https://test.salesforce.com", production: "", developer: "",
+                 custom: " --instance-url https://YOUR-DOMAIN.my.salesforce.com" };
+  return `sf org login web --alias ${alias}${urls[state.loginType]}`;
+}
+async function viewStart() {
+  main.innerHTML = `
+    <h1>Get started</h1>
+    <p class="lead">Four steps, once. After that you paste a ticket and read the answer: the root cause with its evidence, the smallest fix, and a comment ready for the ticket.</p>
+    <div id="start-steps"><p class="muted"><span class="spinner"></span> Checking this computer…</p></div>`;
+  await refreshStatus();
+  let pre, orgs;
+  try { pre = await api("/api/prereqs"); } catch (error) { pre = { checks: [], ok: false, error }; }
+  try { orgs = await api("/api/orgs"); } catch (error) { orgs = { orgs: [], error }; }
+  state.orgs = orgs.orgs || [];
+  const required = pre.checks.filter(c => c.required);
+  const toolsOk = required.length > 0 && required.filter(c => c.name !== "Authenticated org").every(c => c.ok);
+  const hasOrg = state.orgs.length > 0;
+
+  const checks = pre.checks.filter(c => c.name !== "Authenticated org").map(c => `
+    <li><span class="${c.ok ? "mark-ok" : (c.required ? "mark-bad" : "mark-warn")}">${c.ok ? "✓" : (c.required ? "✕" : "!")}</span>
+      <div><b>${esc(c.name)}</b> <span class="muted">${esc(c.detail)}</span>
+        ${c.hint && !c.ok ? `<div class="small muted">${esc(c.hint)}</div>` : ""}
+        ${c.fix ? `<div class="small" style="margin-top:6px">How to fix it on ${esc({windows:"Windows",macos:"macOS",linux:"Linux"}[pre.os])}:</div>${c.fix.map(line => /^(or|Then|sudo|brew|npm|python|winget|xcode)/.test(line) && !/^(or |Then )/.test(line) ? cmd(line) : `<div class="small muted">${esc(line)}</div>`).join("")}` : ""}
+      </div></li>`).join("");
+
+  const orgRows = state.orgs.map(o => `
+    <tr><td><b>${esc(o.alias || o.username)}</b><div class="small muted">${esc(o.instance_url || "")}</div></td>
+        <td id="org-class-${esc(o.alias || o.username)}">${classChip(null)}</td>
+        <td class="small muted" id="org-note-${esc(o.alias || o.username)}"></td></tr>`).join("");
+
+  $("#start-steps").innerHTML = `
+    ${pre.error ? errorBox(pre.error) : ""}
+    <div class="card step ${toolsOk ? "done" : "todo"}">
+      <div class="num">${toolsOk ? "✓" : "1"}</div>
+      <div><h2>This computer has what it needs</h2>
+        <ul class="checks">${checks || '<li><span class="mark-wait">…</span><div class="muted">No checks could be run.</div></li>'}</ul>
+        <div class="row" style="margin-top:10px"><button class="btn sm" id="recheck">Check again</button></div>
+      </div>
+    </div>
+
+    <div class="card step ${hasOrg ? "done" : "todo"}">
+      <div class="num">${hasOrg ? "✓" : "2"}</div>
+      <div><h2>Connect a Salesforce org</h2>
+        ${STATUS.demo ? `<div class="banner info">You are using the <b>demo orgs</b>: simulated, with a planted bug. No real Salesforce org is involved, and Apex is not executed in them.</div>` : ""}
+        ${orgs.error ? errorBox(orgs.error) : ""}
+        ${hasOrg ? `<div class="tablewrap"><table><thead><tr><th>Org</th><th>Kind</th><th>What the investigator may do</th></tr></thead><tbody>${orgRows}</tbody></table></div>`
+                 : `<p class="muted">No org is connected yet.</p>`}
+        ${STATUS.demo ? "" : `
+        <details ${hasOrg ? "" : "open"}><summary>${hasOrg ? "Connect another org" : "How to connect your org"}</summary>
+          <p class="small muted" style="margin:10px 0 8px">Connecting happens in your own terminal, through the Salesforce CLI. Your browser opens, you log in to Salesforce, and you can close it again. The investigator never sees your password.</p>
+          <div class="row" style="margin-bottom:10px">
+            <div style="min-width:180px;flex:1"><label for="alias">A short name for this org</label><input type="text" id="alias" value="${esc(state.loginAlias)}" autocomplete="off"></div>
+            <div><label>What kind of org is it?</label>
+              <div class="seg" id="login-type">
+                <button data-type="sandbox">Sandbox</button><button data-type="production">Production</button>
+                <button data-type="developer">Developer Edition</button><button data-type="custom">Custom domain</button>
+              </div></div>
+          </div>
+          <div class="small">1. Open a terminal and run this:</div>
+          <div id="login-cmd"></div>
+          <div class="small">2. Log in in the browser window that opens, and allow access.</div>
+          <div class="small" style="margin-top:4px">3. Come back here and press <b>I have connected it</b>.</div>
+          <p class="small muted" style="margin-top:10px">Use a login with only the access the investigation needs. Production is always read-only here, whatever the user is allowed to do.</p>
+          <button class="btn sm" id="orgs-refresh">I have connected it</button>
+        </details>`}
+        <div class="row" style="margin-top:12px">
+          ${STATUS.demo ? `<button class="btn sm" id="demo-off">Use my own Salesforce orgs</button><button class="btn sm" id="demo-reset">Reset the demo orgs</button>`
+                        : `<button class="btn sm" id="demo-on">No org at hand? Try with the demo orgs</button>`}
+        </div>
+      </div>
+    </div>
+
+    <div class="card step ${STATUS.claude.available ? "done" : "todo"}">
+      <div class="num">${STATUS.claude.available ? "✓" : "3"}</div>
+      <div><h2>The investigator itself: Claude Code</h2>
+        ${STATUS.claude.available
+          ? `<p>Found: <code>${esc(STATUS.claude.version || "claude")}</code>. When you submit a ticket, this page starts Claude Code in this project folder and shows its progress.</p>`
+          : `<p>Claude Code was not found on this computer. You can still use this page: after you submit a ticket it gives you one line to paste into Claude Code, and the result appears here.</p>`}
+        <p class="small muted">Mode is <b>${esc(STATUS.mode)}</b>: ${STATUS.mode === "apply"
+          ? "from Claude Code the investigator may deploy to a sandbox, asking you each time. From this page it only advises."
+          : "the investigator finds the cause and hands you the fix; you apply it."} The mode is set in <code>sfti.config.json</code>, by you.</p>
+      </div>
+    </div>
+
+    <div class="card step ${toolsOk && hasOrg ? "done" : ""}">
+      <div class="num">4</div>
+      <div><h2>Investigate a ticket</h2>
+        <p class="muted">Paste the whole ticket, comments included. The more of the history it has, the less it has to assume.</p>
+        <a class="btn primary" href="#/new">New ticket</a>
+        ${STATUS.demo ? `<a class="btn" href="#/new?sample">Try the sample ticket</a>` : ""}
+      </div>
+    </div>`;
+
+  $("#recheck").onclick = () => viewStart();
+  const refresh = $("#orgs-refresh"); if (refresh) refresh.onclick = () => viewStart();
+  const on = $("#demo-on"); if (on) on.onclick = async () => { on.disabled = true; await api("/api/demo", { method: "POST", body: { enabled: true } }); viewStart(); };
+  const off = $("#demo-off"); if (off) off.onclick = async () => { await api("/api/demo", { method: "POST", body: { enabled: false } }); viewStart(); };
+  const reset = $("#demo-reset"); if (reset) reset.onclick = async () => { await api("/api/demo", { method: "POST", body: { enabled: true, reset: true } }); toast("Demo orgs reset"); viewStart(); };
+  const alias = $("#alias");
+  const paintLogin = () => {
+    const box = $("#login-cmd"); if (!box) return;
+    box.innerHTML = cmd(loginCommand());
+    document.querySelectorAll("#login-type button").forEach(b => b.classList.toggle("on", b.dataset.type === state.loginType));
+  };
+  if (alias) {
+    alias.oninput = () => { state.loginAlias = alias.value; paintLogin(); };
+    document.querySelectorAll("#login-type button").forEach(b => b.onclick = () => {
+      state.loginType = b.dataset.type;
+      const names = { sandbox: "my-sandbox", production: "my-prod", developer: "my-dev", custom: "my-org" };
+      if (Object.values(names).includes(state.loginAlias)) { state.loginAlias = names[state.loginType]; alias.value = state.loginAlias; }
+      paintLogin();
+    });
+    paintLogin();
+  }
+  state.orgs.forEach(async o => {
+    const name = o.alias || o.username;
+    try {
+      const info = await api("/api/orgs/" + encodeURIComponent(name));
+      state.orgInfo[name] = info;
+      const cell = document.getElementById("org-class-" + name); if (cell) cell.innerHTML = classChip(info.classification);
+      const note = document.getElementById("org-note-" + name); if (note) note.textContent = info.what_is_allowed || "";
+    } catch (error) {
+      const cell = document.getElementById("org-class-" + name); if (cell) cell.innerHTML = `<span class="chip bad">Could not be checked</span>`;
+      const note = document.getElementById("org-note-" + name); if (note) note.textContent = error.message;
+    }
+  });
+}
+
+/* ---------- New ticket ---------- */
+function detectKey(text) {
+  const line = text.match(/^\s*(?:key|ticket|issue)\s*[:#]\s*([A-Za-z][A-Za-z0-9_]{0,19}-\d{1,9})\b/im);
+  const any = text.match(/\b([A-Z][A-Z0-9]{1,19}-\d{1,9})\b/);
+  return (line && line[1].toUpperCase()) || (any && any[1]) || "";
+}
+async function viewNew() {
+  await refreshStatus();
+  let orgs = [];
+  let orgError = null;
+  try { orgs = (await api("/api/orgs")).orgs; } catch (error) { orgError = error; }
+  state.orgs = orgs;
+  const options = orgs.map(o => `<option value="${esc(o.alias || o.username)}">${esc(o.alias || o.username)}</option>`).join("");
+  main.innerHTML = `
+    <h1>New ticket</h1>
+    <p class="lead">Paste the ticket exactly as it is in your ticket system. Nothing is sent back there: you get a draft comment to post yourself.</p>
+    ${orgError ? errorBox(orgError) : ""}
+    ${!orgs.length && !orgError ? `<div class="banner warn">No org is connected yet. <a href="#/start">Connect one first</a>, or try the demo orgs.</div>` : ""}
+    <div class="grid2">
+      <div class="card">
+        <div class="field">
+          <div class="spread"><label for="text">The ticket</label>
+            <span class="row">
+              ${STATUS.demo ? `<button class="btn sm" id="load-sample">Load the sample ticket</button>` : ""}
+              ${STATUS.jira && STATUS.jira.enabled ? `<button class="btn sm" id="load-jira">Fetch from Jira</button>` : ""}
+            </span></div>
+          <textarea id="text" spellcheck="false" placeholder="Key: ABC-123&#10;Title: …&#10;&#10;Description&#10;…&#10;&#10;Comments&#10;[date] who: …"></textarea>
+        </div>
+        <div class="row" style="align-items:flex-start">
+          <div class="field" style="flex:1;min-width:150px"><label for="key">Ticket key</label><input type="text" id="key" placeholder="found in the text" autocomplete="off"></div>
+          <div class="field" style="flex:1;min-width:170px"><label for="org">Org where it happens</label><select id="org">${options}</select><div class="small" id="org-kind" style="margin-top:6px"></div></div>
+          <div class="field" style="flex:1;min-width:170px"><label for="sandbox">Sandbox for tests <span class="muted">(optional)</span></label><select id="sandbox"><option value="">None</option>${options}</select></div>
+        </div>
+        <div id="new-error"></div>
+        <div class="row"><button class="btn primary" id="submit" ${orgs.length ? "" : "disabled"}>Save and continue</button>
+          <span class="small muted">Nothing runs until you choose how on the next page.</span></div>
+      </div>
+      <div class="card flat">
+        <h2>What happens next</h2>
+        <ol class="small" style="padding-left:18px;margin:0;display:grid;gap:8px">
+          <li><b>Intake.</b> The ticket is read in full and rewritten in a structured form, with what is unclear listed.</li>
+          <li><b>Memory.</b> It recalls what earlier tickets taught it about this org, and checks that it still holds.</li>
+          <li><b>Investigation.</b> Hypotheses, then records, source, logs and recent changes from the org. Read-only.</li>
+          <li><b>Root cause.</b> One statement, every claim tied to a file and line, a query result or a log line.</li>
+          <li><b>Fix.</b> The smallest correct change, as a diff, with a test plan. You apply it.</li>
+          <li><b>Comment.</b> A short draft for the ticket, with record Ids and no personal data.</li>
+        </ol>
+        <p class="small muted" style="margin:14px 0 0">A typical investigation takes a few minutes and uses your Claude Code usage.</p>
+      </div>
+    </div>`;
+  const text = $("#text"), key = $("#key"), org = $("#org"), sandbox = $("#sandbox");
+  let keyTouched = false;
+  key.oninput = () => { keyTouched = true; };
+  text.oninput = () => { if (!keyTouched) key.value = detectKey(text.value); };
+  const paintKind = async () => {
+    const name = org.value; if (!name) return;
+    $("#org-kind").innerHTML = classChip(null);
+    try { const info = state.orgInfo[name] || await api("/api/orgs/" + encodeURIComponent(name)); state.orgInfo[name] = info;
+          if (org.value === name) $("#org-kind").innerHTML = classChip(info.classification) +
+            (info.org_memory && info.org_memory.components ? ` <span class="chip">${info.org_memory.components} components remembered</span>` : ""); }
+    catch (error) { $("#org-kind").innerHTML = `<span class="chip bad">Could not be checked</span>`; }
+  };
+  org.onchange = paintKind; paintKind();
+  const loadSample = async () => {
+    const sample = await api("/api/sample");
+    text.value = sample.text; key.value = sample.key; keyTouched = true;
+    if ([...org.options].some(o => o.value === sample.org)) org.value = sample.org;
+    if ([...sandbox.options].some(o => o.value === sample.sandbox)) sandbox.value = sample.sandbox;
+    paintKind();
+  };
+  const sampleBtn = $("#load-sample"); if (sampleBtn) sampleBtn.onclick = loadSample;
+  if (location.hash.includes("?sample") && STATUS.demo) loadSample();
+  const jiraBtn = $("#load-jira");
+  if (jiraBtn) jiraBtn.onclick = async () => {
+    const wanted = (key.value || prompt("Jira key, for example ABC-123") || "").trim(); if (!wanted) return;
+    try { const got = await api("/api/jira/" + encodeURIComponent(wanted)); text.value = got.text; key.value = got.key; keyTouched = true; }
+    catch (error) { $("#new-error").innerHTML = errorBox(error); }
+  };
+  $("#submit").onclick = async () => {
+    $("#new-error").innerHTML = "";
+    try {
+      const made = await api("/api/tickets", { method: "POST", body: { text: text.value, key: key.value, org: org.value, sandbox: sandbox.value } });
+      location.hash = "#/ticket/" + encodeURIComponent(made.ticket.key);
+    } catch (error) {
+      $("#new-error").innerHTML = errorBox(error) + (/already exists/.test(error.message) && key.value
+        ? `<p><a class="btn sm" href="#/ticket/${encodeURIComponent(key.value.toUpperCase())}">Open ${esc(key.value.toUpperCase())}</a></p>` : "");
+    }
+  };
+}
+
+/* ---------- Tickets ---------- */
+async function viewTickets() {
+  main.innerHTML = `<h1>Tickets</h1><p class="lead">Every ticket investigated on this computer. They live in the <code>tickets/</code> folder and are never uploaded anywhere.</p><div id="list"><p class="muted"><span class="spinner"></span> Loading…</p></div>`;
+  await refreshStatus();
+  const data = await api("/api/tickets");
+  if (!data.tickets.length) {
+    $("#list").innerHTML = `<div class="card empty"><p>No ticket yet.</p><a class="btn primary" href="#/new">New ticket</a></div>`;
+    return;
+  }
+  $("#list").innerHTML = `<div class="card" style="padding:6px 10px"><div class="tablewrap"><table>
+    <thead><tr><th>Ticket</th><th>Org</th><th>Status</th><th>Root cause</th><th>Evidence check</th><th>Created</th></tr></thead>
+    <tbody>${data.tickets.map(t => `
+      <tr class="click" data-key="${esc(t.key)}"><td><b>${esc(t.key)}</b><div class="small muted">${esc(t.title || "")}</div></td>
+      <td>${esc(t.org || "")}</td><td>${stageChip(t.stage)}</td><td>${causeChip(t.root_cause_status)}</td>
+      <td>${t.evidence_check ? (t.evidence_check.ok ? `<span class="chip ok">✓ ${t.evidence_check.citations.valid} citations</span>` : `<span class="chip bad">${t.evidence_check.problems.length} problem(s)</span>`) : ""}</td>
+      <td class="small muted">${when(t.created_at)}</td></tr>`).join("")}</tbody></table></div></div>
+    <a class="btn primary" href="#/new">New ticket</a>`;
+  document.querySelectorAll("tr.click").forEach(row => row.onclick = () => { location.hash = "#/ticket/" + encodeURIComponent(row.dataset.key); });
+}
+
+/* ---------- One ticket ---------- */
+function feedItem(e) {
+  const marks = { tool: ["mark-ok", "›"], info: ["mark-wait", "•"], note: ["mark-wait", "“"], warn: ["mark-warn", "!"],
+                  error: ["mark-bad", "✕"], done: ["mark-ok", "✓"] };
+  const [tone, mark] = marks[e.kind] || ["mark-wait", "•"];
+  const extra = e.kind === "done" && (e.duration_seconds || e.turns)
+    ? ` <span class="muted small">(${[e.duration_seconds ? Math.round(e.duration_seconds / 60) + " min" : "", e.turns ? e.turns + " steps" : ""].filter(Boolean).join(", ")})</span>` : "";
+  return `<li><span class="${tone}">${mark}</span><div><span class="${e.kind === "note" ? "note" : ""}">${esc(e.label)}</span>${extra}${e.detail ? `<div class="d">${esc(e.detail)}</div>` : ""}</div></li>`;
+}
+function renderDiff(text) {
+  return `<pre class="diff">${text.split("\n").map(line => {
+    const cls = line.startsWith("@@") ? "hunk" : (line.startsWith("+++") || line.startsWith("---")) ? "file"
+      : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+    return cls ? `<span class="${cls}">${esc(line) || " "}</span>` : esc(line) + "\n";
+  }).join("")}</pre>`;
+}
+async function viewTicket(key) {
+  if (!key) { location.hash = "#/tickets"; return; }
+  main.innerHTML = `<p class="muted"><span class="spinner"></span> Loading ${esc(key)}…</p>`;
+  await refreshStatus();
+  let events = [];
+  let lastStage = null;
+
+  async function paint(full) {
+    const t = await api("/api/tickets/" + encodeURIComponent(key));
+    const got = await api(`/api/tickets/${encodeURIComponent(key)}/events?after=0`);
+    events = got.events;
+    const running = t.stage === "running";
+    const hasResult = !!t.report_html;
+    if (!full && lastStage === t.stage && running) {
+      const feed = $("#feed"); if (feed) { feed.innerHTML = events.map(feedItem).join(""); feed.scrollTop = feed.scrollHeight; }
+      const steps = $("#steps"); if (steps) steps.innerHTML = stepsHtml(t);
+      return t;
+    }
+    lastStage = t.stage;
+    const isSample = key === STATUS.sample_ticket_key && STATUS.demo;
+    const tabs = [["cause", "Root cause", !!t.root_cause_html], ["fix", "Fix", !!(t.fix_html || t.fix_diff)], ["report", "Full report", hasResult],
+                  ["comment", "Ticket comment", !!t.comment_markdown], ["evidence", "Evidence", t.evidence.length > 0],
+                  ["ticket", "Ticket", true], ["activity", "Activity", events.length > 0]].filter(x => x[2]);
+    if (!tabs.some(x => x[0] === state.ticketTab)) state.ticketTab = tabs[0][0];
+    const sampleRun = t.run && t.run.runner === "sample";
+
+    main.innerHTML = `
+      <div class="spread" style="margin-bottom:4px"><a class="small" href="#/tickets">← All tickets</a>
+        <span class="row"><button class="btn sm danger" id="delete" ${running ? "disabled" : ""}>Delete</button></span></div>
+      <h1>${esc(t.key)}${t.title ? " · " + esc(t.title) : ""}</h1>
+      <p class="row" style="margin:0 0 20px">${stageChip(t.stage)} ${causeChip(t.root_cause_status)}
+        ${t.evidence_check ? (t.evidence_check.ok ? `<span class="chip ok">✓ Evidence check passed · ${t.evidence_check.citations.valid} citations</span>` : `<span class="chip bad">Evidence check: ${t.evidence_check.problems.length} problem(s)</span>`) : ""}
+        <span class="chip">Org: ${esc(t.org || "?")}</span>${t.sandbox ? `<span class="chip">Tests on: ${esc(t.sandbox)}</span>` : ""}</p>
+      <div id="ticket-error"></div>
+
+      ${sampleRun && hasResult ? `<div class="banner info"><b>Recorded sample.</b> The evidence below was gathered just now from the simulated org by the real tools. The written analysis is the stored sample, not a fresh AI investigation. The simulated org does not execute Apex.</div>` : ""}
+
+      ${hasResult ? `
+        <div class="card verdict">
+          <div class="row">${causeChip(t.root_cause_status)}</div>
+          <div class="big prose">${t.root_cause_summary_html || esc(t.root_cause_summary || "")}</div>
+          <div class="row small muted">Every claim is tied to an artifact. Open <b>Root cause</b> for the chain and <b>Evidence</b> for the files.
+            ${t.has_report_html ? `<a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/report.html" target="_blank" rel="noopener">Open printable report</a>` : ""}</div>
+          ${t.evidence_check && !t.evidence_check.ok ? `<div class="banner bad" style="margin:0">${t.evidence_check.problems.map(esc).join("<br>")}</div>` : ""}
+        </div>` : ""}
+
+      ${!hasResult || running ? `
+      <div class="grid2">
+        <div class="card">
+          <div class="spread"><h2>${running ? "Investigating…" : "Start the investigation"}</h2>
+            ${running ? `<button class="btn sm" id="cancel">Stop</button>` : ""}</div>
+          ${running ? "" : `
+            <div class="row" style="margin-bottom:12px">
+              <button class="btn primary" id="run-agent" ${STATUS.claude.available ? "" : "disabled"}>Investigate with Claude Code</button>
+              ${isSample ? `<button class="btn" id="run-sample">Replay the recorded sample</button>` : ""}
+            </div>
+            ${STATUS.claude.available ? `<p class="small muted">Starts Claude Code in this project folder. It reads from the org and writes only into this ticket's folder. It cannot change the org from here: nothing is there to approve a write.</p>`
+              : `<p class="small muted">Claude Code was not found, so this page cannot start it for you.</p>`}
+            ${isSample ? `<p class="small muted"><b>Replay</b> shows a complete result in seconds without the AI: the real tools gather the evidence from the simulated org and the stored analysis is displayed.</p>` : ""}
+            <details><summary>Or run it yourself in Claude Code</summary>
+              <p class="small muted">Open Claude Code in this project folder and paste this. The result appears on this page as it is written.</p>
+              <pre class="plain">${esc(t.prompt || "")}</pre>
+              <button class="btn sm" data-copy="${esc(t.prompt || "")}" style="margin-top:8px">Copy the prompt</button>
+            </details>`}
+          ${events.length ? `<ul class="feed" id="feed" style="margin-top:8px">${events.map(feedItem).join("")}</ul>` : (running ? `<ul class="feed" id="feed"></ul>` : "")}
+        </div>
+        <div class="card flat"><h2>Progress</h2><ul class="checks" id="steps">${stepsHtml(t)}</ul></div>
+      </div>` : ""}
+
+      ${hasResult || t.ticket_html || events.length ? `
+      <div class="card">
+        <div class="tabs" id="tabs">${tabs.map(([id, label]) => `<button data-tab="${id}" class="${id === state.ticketTab ? "on" : ""}">${esc(label)}</button>`).join("")}</div>
+        <div id="tab"></div>
+      </div>` : ""}
+
+      ${hasResult && !running ? `<div class="row"><button class="btn sm" id="rerun" ${STATUS.claude.available ? "" : "disabled"}>Investigate again with Claude Code</button>
+        ${isSample ? `<button class="btn sm" id="rerun-sample">Replay the sample again</button>` : ""}
+        <a class="btn sm" href="#/memory">See what was learned about the org</a></div>` : ""}`;
+
+    const paintTab = () => {
+      const box = $("#tab"); if (!box) return;
+      const tab = state.ticketTab;
+      if (tab === "cause") box.innerHTML = `<div class="prose">${t.root_cause_html || ""}</div>` +
+        (t.open_questions_html ? `<h3>Open questions</h3><div class="prose">${t.open_questions_html}</div>` : "");
+      else if (tab === "fix") box.innerHTML = `<div class="prose">${t.fix_html || ""}</div>` +
+        (t.fix_diff ? `<div class="spread" style="margin-top:16px"><h3 style="margin:0">Complete diff (fix.diff)</h3><button class="btn sm" data-copy="${esc(t.fix_diff)}">Copy the diff</button></div><div style="margin-top:8px">${renderDiff(t.fix_diff)}</div>` : "") +
+        (t.tests_html ? `<h3>Test results and test plan</h3><div class="prose">${t.tests_html}</div>` : "") +
+        (t.risks_html ? `<h3>Risks</h3><div class="prose">${t.risks_html}</div>` : "") +
+        `<div class="banner info" style="margin-top:16px">Nothing was deployed. Apply the change yourself, or ask the investigator in Claude Code with mode <code>apply</code>, where every deploy asks for your approval and production is refused.</div>`;
+      else if (tab === "report") box.innerHTML = `<div class="prose">${t.report_html}</div>`;
+      else if (tab === "comment") box.innerHTML = `<div class="banner warn">A draft. Nothing is posted anywhere: read it, then paste it into the ticket yourself.</div>
+        <div class="prose">${t.comment_html}</div><button class="btn primary" style="margin-top:12px" data-copy="${esc((t.comment_markdown || "").replace(/^<!--[\s\S]*?-->\s*/, ""))}">Copy the comment</button>`;
+      else if (tab === "evidence") box.innerHTML = `<p class="small muted">Files saved in <code>tickets/${esc(t.key)}/</code>. Query results are stored with personal data redacted.</p>
+        <div class="tablewrap"><table><thead><tr><th>Kind</th><th>File</th><th>What it holds</th></tr></thead><tbody>${t.evidence.map(a => `
+          <tr><td>${esc(String(a.kind).replace(/_/g, " "))}</td><td><code>${esc(a.path)}</code></td><td>${esc(a.description)}</td></tr>`).join("")}</tbody></table></div>`;
+      else if (tab === "ticket") box.innerHTML = (t.ticket_html ? `<div class="prose">${t.ticket_html}</div>` : `<p class="muted small">Not structured yet. This is the text as pasted:</p>`) +
+        (t.original_text ? `<details ${t.ticket_html ? "" : "open"}><summary>Original text as pasted</summary><pre class="plain" style="margin-top:8px">${esc(t.original_text)}</pre></details>` : "");
+      else if (tab === "activity") box.innerHTML = `<ul class="feed">${events.map(feedItem).join("")}</ul>`;
+    };
+    document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+      state.ticketTab = b.dataset.tab;
+      document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b)); paintTab();
+    });
+    paintTab();
+    const feed = $("#feed"); if (feed) feed.scrollTop = feed.scrollHeight;
+
+    const start = runner => async () => {
+      try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body: { runner } }); lastStage = null; await paint(true); poll(); }
+      catch (error) { $("#ticket-error").innerHTML = errorBox(error); }
+    };
+    [["#run-agent", "agent"], ["#rerun", "agent"], ["#run-sample", "sample"], ["#rerun-sample", "sample"]].forEach(([sel, runner]) => {
+      const button = $(sel); if (button) button.onclick = start(runner);
+    });
+    const cancel = $("#cancel"); if (cancel) cancel.onclick = async () => { await api(`/api/tickets/${encodeURIComponent(key)}/cancel`, { method: "POST" }); lastStage = null; paint(true); };
+    const del = $("#delete"); if (del) del.onclick = async () => {
+      if (!confirm(`Delete ${key} from this computer?\n\nThis removes its folder: the report, the saved evidence and the retrieved source. Nothing in Salesforce is touched.`)) return;
+      try { await api("/api/tickets/" + encodeURIComponent(key), { method: "DELETE" }); location.hash = "#/tickets"; }
+      catch (error) { $("#ticket-error").innerHTML = errorBox(error); }
+    };
+    return t;
+  }
+  function stepsHtml(t) {
+    const running = t.stage === "running";
+    let current = false;
+    return t.steps.map(s => {
+      const active = running && !s.done && !current; if (active) current = true;
+      return `<li><span class="${s.done ? "mark-ok" : "mark-wait"}">${s.done ? "✓" : (active ? '<span class="spinner"></span>' : "○")}</span>
+        <div>${esc(s.label)}${s.detail ? `<div class="small muted">${esc(s.detail)}</div>` : ""}</div></li>`;
+    }).join("");
+  }
+  function poll() {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try { const t = await paint(false); if (t.stage !== "running") { clearInterval(pollTimer); pollTimer = null; state.ticketTab = "cause"; await paint(true); refreshStatus(); } }
+      catch (error) { clearInterval(pollTimer); }
+    }, 1200);
+  }
+  const first = await paint(true);
+  if (first.stage === "running") poll();
+  else if (!first.report_html) {
+    // The investigation may be running in Claude Code itself: keep looking for new files.
+    pollTimer = setInterval(async () => { try { const t = await api("/api/tickets/" + encodeURIComponent(key));
+      if (t.stage !== lastStage || t.report_html) { lastStage = null; await paint(true); if (t.report_html) { clearInterval(pollTimer); } } } catch (error) { clearInterval(pollTimer); } }, 4000);
+  }
+}
+
+/* ---------- Org memory ---------- */
+function describeComponent(c) {
+  const o = c.outline || {};
+  const bits = [];
+  if (o.kind === "trigger" && o.object) bits.push(`Trigger on ${o.object} (${(o.events || []).join(", ")})`);
+  if (o.kind === "flow") bits.push(`${o.trigger_type === "RecordAfterSave" ? "After-save" : o.trigger_type === "RecordBeforeSave" ? "Before-save" : "Flow"} on ${o.object || "?"}${o.record_trigger_type ? ", on " + o.record_trigger_type.toLowerCase() : ""}`);
+  if (o.is_test) bits.push("Test class");
+  if (o.methods && o.methods.length && !o.is_test) bits.push("Methods: " + o.methods.slice(0, 4).map(m => m.name).join(", ") + (o.methods.length > 4 ? "…" : ""));
+  if (o.objects_queried && o.objects_queried.length) bits.push("Queries " + o.objects_queried.join(", "));
+  if (o.fields_assigned && o.fields_assigned.length && !o.is_test) bits.push("Sets " + o.fields_assigned.slice(0, 5).join(", "));
+  if (o.reads && o.reads.length) bits.push("Tests " + o.reads.join(", "));
+  if (o.writes && o.writes.length) bits.push("Writes " + o.writes.join(", "));
+  if (o.actions && o.actions.length) bits.push("Actions: " + o.actions.join(", "));
+  if (o.calls && o.calls.length && !o.is_test) bits.push("Calls " + o.calls.slice(0, 3).join(", "));
+  return bits.join(" · ");
+}
+function freshChip(check) {
+  if (!check) return `<span class="chip">Not checked yet</span>`;
+  const map = { unchanged: ["ok", "Unchanged in the org"], changed: ["warn", "Changed in the org"],
+                not_found_in_org: ["bad", "No longer in the org"], not_checked: ["", "Could not be checked"] };
+  const [tone, label] = map[check.status] || ["", check.status];
+  return `<span class="chip ${tone}"><span class="dot"></span>${esc(label)}</span>`;
+}
+async function viewMemory(orgId) {
+  main.innerHTML = `<h1>Org memory</h1>
+    <p class="lead">What earlier investigations learned about each org: which automation runs on which object, what each class and flow does, how they connect, and the facts worth keeping. The next ticket starts from this instead of from zero.</p>
+    <div id="memory"><p class="muted"><span class="spinner"></span> Loading…</p></div>`;
+  await refreshStatus();
+  const known = (await api("/api/memory")).orgs;
+  if (!known.length) {
+    $("#memory").innerHTML = `<div class="card empty"><p>Nothing remembered yet.</p><p class="small">The memory fills by itself during investigations: every component the investigator retrieves is added to the map.</p><a class="btn primary" href="#/new">Investigate a ticket</a></div>`;
+    return;
+  }
+  const current = known.find(o => o.org_id === orgId) || known[0];
+  const map = await api("/api/memory/" + encodeURIComponent(current.org_id));
+  const all = Object.values(map.components_by_type).flat();
+  const paint = verified => {
+    const status = verified ? verified.components : {};
+    const staleIds = new Set(verified ? verified.stale_notes : map.notes.filter(n => n.stale).map(n => n.id));
+    $("#memory").innerHTML = `
+      <div class="row" style="margin-bottom:14px">${known.map(o => `<a class="chip ${o.org_id === current.org_id ? "ok" : ""}" style="text-decoration:none" href="#/memory/${esc(o.org_id)}">${esc((o.aliases || []).join(", ") || o.org_id)}</a>`).join("")}</div>
+      <div class="tiles">
+        <div class="tile"><b>${map.counts.components}</b><span>components known</span></div>
+        <div class="tile"><b>${map.counts.objects}</b><span>objects mapped</span></div>
+        <div class="tile"><b>${map.counts.links}</b><span>links between them</span></div>
+        <div class="tile"><b>${map.counts.notes}</b><span>facts remembered</span></div>
+        <div class="tile"><b>${map.tickets.length}</b><span>tickets contributed</span></div>
+      </div>
+      <div class="card">
+        <div class="spread"><div><h2 style="margin:0">Is it still true?</h2>
+          <p class="small muted" style="margin:4px 0 0">Orgs change. Before the investigator relies on anything here, it asks the org whether each component was modified since it was learned. You can run that check now.</p></div>
+          <button class="btn primary" id="verify">Check against the org</button></div>
+        <div id="verify-result" style="margin-top:10px">${verified ? `<div class="banner ${verified.counts.changed || verified.counts.not_found_in_org ? "warn" : "ok"}" style="margin:0">
+          Checked ${when(verified.checked_at)}: ${Object.entries(verified.counts).map(([k, v]) => `${v} ${esc(k.replace(/_/g, " "))}`).join(", ")}.
+          ${verified.stale_notes.length ? ` ${verified.stale_notes.length} remembered fact(s) are now flagged and will be re-read before use.` : ""}</div>` : ""}</div>
+      </div>
+
+      <div class="card"><h2>What runs on each object</h2>
+        ${Object.keys(map.objects).length ? `<div class="tablewrap"><table><thead><tr><th>Object</th><th>Triggers</th><th>Flows</th><th>Validation rules</th><th>Workflow rules</th></tr></thead><tbody>
+        ${Object.entries(map.objects).map(([name, o]) => `<tr><td><b>${esc(name)}</b></td>
+          <td>${(o.triggers || []).map(esc).join(", ") || '<span class="muted">none seen</span>'}</td>
+          <td>${(o.flows || []).map(esc).join(", ") || '<span class="muted">none seen</span>'}</td>
+          <td>${o.validation_rules ? (o.validation_rules.map(esc).join(", ") || "none") : '<span class="muted">not looked at</span>'}</td>
+          <td>${o.workflow_rules ? (o.workflow_rules.map(esc).join(", ") || "none") : '<span class="muted">not looked at</span>'}</td></tr>`).join("")}
+        </tbody></table></div>` : `<p class="muted">No object mapped yet.</p>`}</div>
+
+      <div class="card"><h2>Components</h2>
+        <div class="tablewrap"><table><thead><tr><th>Component</th><th>What it does</th><th>Seen in</th><th>State</th></tr></thead><tbody>
+        ${all.map(c => `<tr><td><b>${esc(c.component.split(":")[1])}</b><div class="small muted">${esc(c.component.split(":")[0])}</div></td>
+          <td class="small">${esc(describeComponent(c)) || '<span class="muted">—</span>'}</td>
+          <td class="small">${(c.seen_in_tickets || []).map(k => `<a href="#/ticket/${encodeURIComponent(k)}">${esc(k)}</a>`).join(", ")}</td>
+          <td>${freshChip(status[c.component] || null)}<div class="small muted">last read ${when(c.last_seen)}</div></td></tr>`).join("")}
+        </tbody></table></div></div>
+
+      <div class="card"><h2>Facts remembered</h2>
+        ${map.notes.length ? map.notes.map(n => `<div class="note-card ${staleIds.has(n.id) ? "stale" : ""}">
+          ${staleIds.has(n.id) ? `<div class="chip warn" style="margin-bottom:6px">Needs re-reading: ${esc((n.stale_because || ["a component it is about changed"]).join("; "))}</div>` : ""}
+          <div>${esc(n.text)}</div>
+          <div class="row small muted" style="margin-top:8px">${(n.topics || []).map(t => `<span class="chip">${esc(t)}</span>`).join("")}
+            ${n.ticket_key ? `<span>learned in <a href="#/ticket/${encodeURIComponent(n.ticket_key)}">${esc(n.ticket_key)}</a></span>` : ""}
+            ${(n.evidence || []).length ? `<span>from <code>${esc(n.evidence[0])}</code></span>` : ""}</div></div>`).join("")
+          : `<p class="muted">No fact noted yet. The map above was built automatically; notes are added by the investigator at the end of a ticket.</p>`}</div>
+
+      ${map.links.length ? `<div class="card"><h2>How they connect</h2><div class="tablewrap"><table><thead><tr><th>From</th><th></th><th>To</th><th>Known from</th></tr></thead><tbody>
+        ${map.links.map(l => `<tr><td>${esc(l.from.split(":")[1])}</td><td class="muted">${esc(l.kind)} →</td><td>${esc(l.to.split(":")[1])}</td><td class="small muted">${l.origin === "source" ? "reading the source" : "Salesforce dependency data"}</td></tr>`).join("")}
+        </tbody></table></div></div>` : ""}
+      <p class="small muted">Memory is a lead, never evidence: a report can only cite what was read from the org during that investigation. Stored in <code>knowledge/</code> on this computer; it holds facts about metadata, no record data, and is never committed or uploaded.</p>`;
+    $("#verify").onclick = async () => {
+      const button = $("#verify"); button.disabled = true; button.innerHTML = '<span class="spinner"></span> Asking the org…';
+      try { paint(await api(`/api/memory/${encodeURIComponent(current.org_id)}/verify`, { method: "POST" })); }
+      catch (error) { button.disabled = false; button.textContent = "Check against the org"; $("#verify-result").innerHTML = errorBox(error); }
+    };
+  };
+  paint(null);
+}
+
+/* ---------- Safety ---------- */
+async function viewSafety() {
+  await refreshStatus();
+  main.innerHTML = `
+    <h1>How it stays safe</h1>
+    <p class="lead">The investigator is built so that the worst it can do by mistake is be wrong on paper.</p>
+    <div class="card"><h2>Production is read-only</h2><p>Before every write, the org is asked what it is. Anything that is not provably a sandbox, a scratch org or a Developer Edition org counts as production, and writes to production are refused in code. There is no setting, option or instruction that changes this.</p></div>
+    <div class="card"><h2>Every change needs you</h2><p>In Claude Code, each tool that changes an org asks for your approval with its exact arguments. From this page nothing can be approved, so nothing can be changed: investigations started here only read, and hand you the fix as a diff.</p></div>
+    <div class="card"><h2>Evidence, or it says so</h2><p>Every claim about the cause must point to a file and line, a saved query result or a debug log line. A checker verifies that each of those exists before a report is shown as passed. What cannot be proven is labelled <b>Hypothesis</b>, and a cause that cannot be confirmed is reported as <b>Not confirmed</b> with what is missing.</p></div>
+    <div class="card"><h2>Your data stays here</h2><p>Query results are saved with personal data redacted. Reports and comments use record Ids, not names. Tickets, evidence and the org memory live in folders on this computer that are never committed or uploaded. Nothing is posted to your ticket system: you get a draft.</p></div>
+    <div class="card"><h2>This page</h2><p>It answers only on this computer (<code>127.0.0.1</code>). It has no button, and no hidden route, that changes a Salesforce org.</p></div>
+    <p class="small muted">Details and the list of what has not yet been verified against a live org are in <code>README.md</code> and <code>docs/DECISIONS.md</code>.</p>`;
+}
+
+refreshStatus().then(route).catch(error => { main.innerHTML = errorBox(error); });
+</script>
+</body>
+</html>

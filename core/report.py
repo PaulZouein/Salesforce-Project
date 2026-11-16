@@ -602,7 +602,8 @@ def markdown_to_html(markdown: str) -> str:
                 out.append(f"<{kind}>")
                 list_stack.append(kind)
             item = re.sub(r"^\s*([-*]|\d+[.)])\s+", "", line)
-            while i + 1 < len(lines) and lines[i + 1].startswith(("   ", "\t")) and lines[i + 1].strip() \
+            # A wrapped list item continues on lines indented by two or more spaces.
+            while i + 1 < len(lines) and lines[i + 1].startswith(("  ", "\t")) and lines[i + 1].strip() \
                     and not re.match(r"^\s*([-*]|\d+[.)])\s+", lines[i + 1]):
                 i += 1
                 item += " " + lines[i].strip()
