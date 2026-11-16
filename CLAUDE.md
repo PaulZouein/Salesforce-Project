@@ -37,11 +37,14 @@ Call `get_config` at the start.
 
 ## Procedure
 
-Use the skills; they carry the detail.
+Use the skills; they carry the detail. A user who is new, or has no org connected, gets
+`get-started` first: one step at a time, with the exact commands.
 
 1. **Intake** (`intake-ticket`): `init_ticket`, save the ticket to `tickets/<KEY>/ticket.md`, read
    attachments, summarize back, list ambiguities.
-2. **Scope**: confirm the org alias with the user; `org_info` for its classification.
+2. **Scope**: confirm the org alias with the user; `org_info` for its classification. Then
+   `recall_org_knowledge` with the ticket's key words: what earlier tickets learned about this
+   org, checked against the org's current state.
 3. **Hypotheses** (`investigate-ticket`): ranked list, each with what would confirm it and what
    would rule it out.
 4. **Targeted investigation**: retrieve only the components a hypothesis needs; trace execution
@@ -53,6 +56,31 @@ Use the skills; they carry the detail.
    not resolved.
 8. **Report** (`write-ticket-comment` for the comment): `tickets/<KEY>/report.md`, validated with
    `validate_report`, plus `comment.md`.
+9. **Remember**: `remember_org_fact` for what you learned about how the org is built, so the next
+   ticket on this org starts from it.
+
+## Org memory
+
+Every component you retrieve is added to a local map of the org (`knowledge/`, never committed):
+what each class, trigger and flow does, what runs on each object, how they connect. Notes you
+save with `remember_org_fact` are kept with it. `recall_org_knowledge` searches all of it and
+asks the org whether each remembered component changed since it was learned.
+
+- **Memory is a lead, never evidence.** It tells you where to look first. A report cites only
+  what you read from the org during this investigation, never the memory.
+- Anything recalled as `changed`, `stale`, `not_found_in_org` or `not_checked` is read again
+  before you rely on it. `retrieve_components` tells you when a component differs from what was
+  remembered.
+- Remember facts about metadata and how the org works. Never record data or personal data, and
+  not the conclusion of one ticket.
+- A note that turned out wrong is replaced (`supersedes`) or removed (`forget_org_fact`).
+
+## The web page
+
+`python -m webapp` is a local page for the same work: set-up checks, a form for the ticket,
+progress, results and the org memory. Tickets submitted there are in `tickets/<KEY>/` with the
+original text in `attachments/ticket-original.txt`. When the page starts you unattended, nobody
+can approve anything: stay in advise mode and do not attempt write tools.
 
 ## Workspace
 

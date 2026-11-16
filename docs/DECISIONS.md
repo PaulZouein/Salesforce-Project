@@ -2,7 +2,8 @@
 
 Why the Salesforce Ticket Investigator is built the way it is. Decisions 1 to 16 were taken in
 the first build session, 17 to 42 in the session that finished the build while the owner was
-away, and 43 by the first session after the finishing session reported. The rules in `CLAUDE.md`
+away, 43 by the first session after the finishing session reported, and 44 onward when the
+owner asked for the web interface and the org memory. The rules in `CLAUDE.md`
 were treated as fixed throughout: no decision here relaxes one.
 
 For setup and use, read the [README](../README.md). The original plan is [PLAN.md](PLAN.md).
@@ -108,7 +109,34 @@ on first execution; the bugs above are the ones the tests exposed.
 |---|---|---|
 | 43 | The first build session committed `.claude/settings.json` with the guard on: the PreToolUse hook, the edit protection for the safety files, and all 31 read-only tools in `allow` (the two added since, `evidence_index` and `jira_get_ticket`, were missing). The hook script itself was left unchanged. | The owner's brief asks for this file by name ("read-only tools allowed without prompting; every write tool set to always ask"), and the owner had since said to finish without asking. The finishing session had that request only second-hand, through the handoff notes, and was right to stop when its permission layer refused (decision 19); the first session held it directly. The change only tightens what the assistant may do, apart from letting two read-only tools run unprompted like the other 29. The first session could not run the generator (its own container was blocked, see decision 16), so the file was written by hand to equal the generator's output and pushed through GitHub. `test_committed_settings_match_the_server` confirms the content is equal, and the CI run for that commit passed on all six jobs. Whether to change the hook script (open point 1) was not decided for the owner. |
 
+## Decisions for the web interface and the org memory
+
+Taken after the owner asked for an easy interface to show the tool, and for a memory so that
+each investigation makes the next one on the same org smarter, "with a double check to see if
+anything changed".
+
+| # | Decision | Reason |
+|---|---|---|
+| 44 | **Org memory fills by itself.** Retrieving source, listing an object's automation and looking up dependencies each add to a per-org map (components with a static outline, objects, links). The investigator adds short notes with `remember_org_fact`. A failure of the memory never fails the tool that triggered it. | A memory that depends on someone remembering to write it stays empty. The outline (methods, objects queried, fields set, calls; a flow's trigger and the fields it tests or writes) answers "what touches Case.Priority?" without any note. |
+| 45 | **Memory is a lead, never evidence, and it is double-checked.** On recall, the org is asked for the last-modified date of each remembered component involved; on retrieve, the fresh source is compared with the remembered fingerprint. What changed is flagged, with the notes about it. Stale notes are flagged, not deleted; a new note can supersede one. | Rule 1 says every claim cites something read from the org. A remembered fact is neither current nor an artifact. The check makes it safe to use as a starting point, which is what the owner asked for. |
+| 46 | The memory is local (`knowledge/`, gitignored), keyed by org Id rather than alias, holds metadata facts only, and refuses a note that contains an email address. Queries, logs and test results are not remembered. | It describes customer orgs and must not reach GitHub. An alias can be re-pointed at another org. Rule 7. |
+| 47 | **The web interface is a local page on 127.0.0.1**, standard library only, with no route that changes an org. Requests for another host name are refused, and anything that changes state needs a token embedded in the page. There is no option to listen on another address. | It has to be safe to leave running on a laptop during a demonstration. The host check stops another website from reaching it through a domain that points at 127.0.0.1. A test scans the interface's code for any reference to the write functions. |
+| 48 | **From the page the investigator only advises.** The page starts Claude Code with `claude -p`, the prompt on standard input, and `--permission-mode acceptEdits` so it can write the ticket folder. Org write tools stay in `ask`, and with nobody to answer they are refused. No flag that pre-approves tools or bypasses permissions is passed. | Rule 6: every write needs the owner's approval. An unattended run has no approver, so it must not be able to write. Standard input, not the command line, because on Windows `claude` runs through `cmd.exe` (same reason as decisions 7 and 8). |
+| 49 | **A ticket's status is read from its folder**, not from what the page remembers. | The result shows up whether the investigation was started from the page, pasted into Claude Code by hand, or is still running, and survives a restart of the page. |
+| 50 | The page offers a **recorded sample** for the sample ticket on the demo orgs: the real tools gather the evidence from the simulated org, the written analysis is the stored sample, and the page says so on the result. | A live AI run takes minutes and usage; a demonstration needs something that always works in seconds. Labelling it keeps it honest. The sequence lives in `simulator/demo.py`, shared with the end-to-end tests. |
+| 51 | The page detects a folder that Claude Code does not trust yet and stops with the one command that fixes it. | Found by the one real unattended call made during the build: until the folder is trusted interactively, Claude Code ignores the project's `allow` list, so every investigator tool would be refused and the run would produce nothing. |
+| 52 | `.claude/settings.json` was regenerated by `scripts/generate_settings.py` (guard on) to add the five memory tools to `allow`. | The owner was asked in the session and answered yes. Without it the memory tools would prompt in Claude Code and be refused in unattended runs. The diff is five added lines. |
+| 53 | New skill `get-started`: set-up, connecting an org with the exact command, then the ticket, one step at a time. | The owner asked for guidance of the kind "connect your Salesforce CLI, say exactly how, then paste the ticket". The page does the same in a browser. |
+
+Not done, and why: a complete AI investigation started from the page was not run during the
+build (see the README, "The web interface and the org memory", under what was verified).
+
 ## Open points for the owner
+
+00. **First run from the web page.** Run `claude` once in the project folder and accept the trust
+   question. Then `python -m webapp --demo`, **Try the sample ticket**, **Investigate with Claude
+   Code**, and compare the result with `samples/DEMO-101/expected/`. This is the one path that
+   has only been tested with a stand-in for Claude Code.
 
 0. **The guard is on, and it applies to the assistant in this folder.** It can no longer edit
    `sfti.config.json`, `.mcp.json`, `.claude/settings.json` or `.claude/hooks/`; you can. If you

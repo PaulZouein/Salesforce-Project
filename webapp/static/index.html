@@ -344,7 +344,8 @@ async function viewStart() {
       <div class="num">${STATUS.claude.available ? "✓" : "3"}</div>
       <div><h2>The investigator itself: Claude Code</h2>
         ${STATUS.claude.available
-          ? `<p>Found: <code>${esc(STATUS.claude.version || "claude")}</code>. When you submit a ticket, this page starts Claude Code in this project folder and shows its progress.</p>`
+          ? `<p>Found: <code>${esc(STATUS.claude.version || "claude")}</code>. When you submit a ticket, this page starts Claude Code in this project folder and shows its progress.</p>
+             <p class="small">Do this once: open a terminal in the project folder, run the command below, sign in if asked, and answer <b>yes</b> when it asks whether you trust this folder. Then close it.</p>${cmd("claude")}`
           : `<p>Claude Code was not found on this computer. You can still use this page: after you submit a ticket it gives you one line to paste into Claude Code, and the result appears here.</p>`}
         <p class="small muted">Mode is <b>${esc(STATUS.mode)}</b>: ${STATUS.mode === "apply"
           ? "from Claude Code the investigator may deploy to a sandbox, asking you each time. From this page it only advises."

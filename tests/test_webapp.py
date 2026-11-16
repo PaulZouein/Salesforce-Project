@@ -341,6 +341,11 @@ open(record, "w", encoding="utf-8").write(json.dumps({"args": args, "prompt": pr
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 def out(obj):
     sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
+if mode == "untrusted":
+    sys.stderr.write("Ignoring 37 permissions.allow entries from .claude/settings.json: this workspace "
+                     "has not been trusted. Run Claude Code interactively here once.\n")
+    sys.stderr.flush()
+    time.sleep(120)
 if mode == "no-mcp":
     out({"type": "system", "subtype": "init", "mcp_servers": [{"name": "sf-investigator", "status": "failed"}], "tools": []})
     out({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "no tools"})
@@ -428,6 +433,18 @@ def test_agent_failures_are_explained(web, fake_claude, monkeypatch, mode, label
     assert result["stage"] == "failed" and result["run"]["status"] == "failed"
     errors = [e for e in web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"] if e["kind"] == "error"]
     assert errors[0]["label"] == label and detail in errors[0]["detail"]
+
+
+def test_untrusted_folder_is_detected_and_explained_instead_of_running_without_tools(web, fake_claude, monkeypatch):
+    """Claude Code ignores the project's allow list until the folder was trusted once interactively."""
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "untrusted")
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    result = web.wait_until_finished("DEMO-101", timeout=30)
+    assert result["stage"] == "failed"
+    errors = [e for e in web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"] if e["kind"] == "error"]
+    assert len(errors) == 1 and errors[0]["label"] == "Claude Code has not been used in this folder yet"
+    assert "run 'claude' once" in errors[0]["detail"] and "trusting the folder" in errors[0]["detail"]
 
 
 def test_agent_run_without_claude_code_explains_the_manual_path(web, tmp_path, monkeypatch):

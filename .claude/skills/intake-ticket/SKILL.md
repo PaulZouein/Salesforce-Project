@@ -14,6 +14,8 @@ of ambiguities. No investigation happens in this skill.
    none, ask for it; do not invent one.
 2. **Create the folder.** Call `init_ticket` with the key. It creates `tickets/<KEY>/` and a
    `ticket.md` template.
+   A ticket submitted through the web page is already there: its text is in
+   `tickets/<KEY>/attachments/ticket-original.txt` and the chosen org in `request.json`.
 3. **Read everything before writing.** Description, every comment, the history, and each file in
    `tickets/<KEY>/attachments/` (open screenshots with the Read tool). Comments often change the
    picture: workarounds tried, which environments are affected, corrected reproduction steps,

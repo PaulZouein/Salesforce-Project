@@ -16,6 +16,13 @@ Prerequisite: `tickets/<KEY>/ticket.md` exists. If not, run `intake-ticket` firs
    real records and logs, and keep reproduction and any change for the sandbox.
 4. `search_tickets` for the error text or the main component: an earlier ticket may already
    explain it.
+5. `recall_org_knowledge` with the ticket's key words (object, feature, symptom). It returns what
+   earlier tickets learned about this org and checks each remembered component against the org.
+   Use it to decide what to retrieve and read **first**. It is a lead, never evidence:
+   - `unchanged`: start there, and still read the file before citing it;
+   - `changed`, `stale`, `not_found_in_org` or `not_checked`: the memory may be wrong. Retrieve the
+     component again and trust what you read today;
+   - nothing remembered: investigate as usual.
 
 ## 2. Hypotheses
 
@@ -104,6 +111,21 @@ user can provide or do (a record Id, a trace flag window, a reproduction in a sa
 3. `validate_report` and fix every problem it lists. Read the warnings.
 4. `export_report_html` if the user wants a readable copy.
 5. Offer `write-ticket-comment`.
+
+## 6. Remember what you learned about the org
+
+Before you finish, save what a future investigation on this org would want to know, with
+`remember_org_fact`: three to six facts, each one or two sentences, each with `topics` (the words
+someone would search for), the `components` it is about and the `evidence` you read it from.
+
+- Good: how the org is built. "CaseEscalationService decides case priority from the account's
+  Support_Tier__c; CaseTriggerHandler calls it on insert and when the account changes." "Cases are
+  also created in bulk by a nightly import through the composite API."
+- Not for the memory: this ticket's conclusion, record data, personal data, guesses.
+- If `recall_org_knowledge` returned a note that turned out wrong or outdated, replace it
+  (`supersedes`) or remove it (`forget_org_fact`).
+
+The components you retrieved are already in the org map; you do not need to describe them again.
 
 ## Reply to the user
 

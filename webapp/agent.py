@@ -360,6 +360,17 @@ class Runner:
             for line in process.stderr:
                 stderr_tail.append(line.rstrip())
                 del stderr_tail[:-20]
+                if "has not been trusted" in line and run.status == "running":
+                    # Without trust, Claude Code ignores the project's allow list, so every investigator
+                    # tool would be refused. Stop now and say how to fix it, rather than produce nothing.
+                    run.status = "failed"
+                    from core.sf_cli import _kill_tree
+                    _kill_tree(process)
+                    run.add({"kind": "error", "label": "Claude Code has not been used in this folder yet",
+                             "detail": "Open a terminal in the project folder, run 'claude' once and accept the "
+                                       "question about trusting the folder. Then come back and start the "
+                                       "investigation again. This is asked once per computer."})
+                    run.finish("failed")
 
         threading.Thread(target=drain_stderr, daemon=True).start()
         finished_ok = False

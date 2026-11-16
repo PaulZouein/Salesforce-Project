@@ -7,6 +7,20 @@ With your approval it can also deploy the fix to a sandbox, test it and roll it 
 
 Production orgs are read-only. That is enforced in code and has no override.
 
+**The quickest way to see it:** after installing (three commands, below), run
+
+```
+python -m webapp --demo
+```
+
+A page opens in your browser. It checks your set-up, lets you paste a ticket, shows the
+investigation as it happens and then the result. `--demo` uses simulated orgs with a planted
+bug, so you need no Salesforce account to try it.
+
+![The result page: root cause, evidence check, tabs for the fix, the report and the comment](docs/images/web-result.png)
+
+- [The web interface](#the-web-interface)
+- [Org memory: it learns your org](#org-memory-it-learns-your-org)
 - [What you get](#what-you-get)
 - [Try it in five minutes, without a Salesforce org](#try-it-in-five-minutes-without-a-salesforce-org)
 - [Set it up for a real org](#set-it-up-for-a-real-org)
@@ -25,9 +39,10 @@ Production orgs are read-only. That is enforced in code and has no override.
 
 | Piece | What it is |
 |---|---|
-| `core/` | All Salesforce logic and every safety check. Standard library only. |
-| `mcp_server/` | A thin MCP server (`sf-investigator`) with 31 read-only tools and 6 write tools. |
-| `.claude/` | Four skills (intake, investigate, propose fix, write comment), a read-only `code-tracer` subagent, permission settings and a guard hook. |
+| `core/` | All Salesforce logic, every safety check, and the org memory. Standard library only. |
+| `mcp_server/` | A thin MCP server (`sf-investigator`) with 36 read-only tools and 6 write tools. |
+| `webapp/` | The local web interface (`python -m webapp`). Standard library only. |
+| `.claude/` | Five skills (get started, intake, investigate, propose fix, write comment), a read-only `code-tracer` subagent, permission settings and a guard hook. |
 | `CLAUDE.md` | The rules the assistant follows in this folder. |
 | `simulator/` | A stand-in for the `sf` executable backed by files, with three simulated orgs. It powers the tests and the zero-setup demo. It does not execute Apex. |
 | `samples/` | A sample ticket (`DEMO-101`), the planted bug behind it, and the report the investigation produced. |
@@ -47,7 +62,112 @@ tickets/<KEY>/
   report.md, report.html, comment.md
 ```
 
+## The web interface
+
+```
+python -m webapp            # your real Salesforce CLI and orgs
+python -m webapp --demo     # simulated demo orgs, no Salesforce account needed
+python -m webapp --port 9000 --no-browser
+```
+
+It opens `http://127.0.0.1:8765/`. Stop it with Ctrl+C.
+
+| Page | What you do there |
+|---|---|
+| **Get started** | Four steps. It checks Python, git, the Salesforce CLI and Claude Code and, for anything missing, shows the command that installs it on your system. It lists your connected orgs with what each one is (production, sandbox…). To connect one, you type a name, pick the kind of org, and copy the exact `sf org login web …` command it builds. |
+| **New ticket** | Paste the ticket as it is, comments included. The key is found in the text. Choose the org where the problem happens and, if you have one, a sandbox for tests. |
+| **The ticket page** | Start the investigation and watch it: each step in plain words ("Querying records", "Reading source", "Checking the report's evidence"). Then the result: the root cause and whether it is confirmed, the evidence check, and tabs for the cause with its evidence chain, the fix as a diff with the test plan, the full report, the draft comment with a copy button, the saved evidence files, and the ticket as it was read. |
+| **Tickets** | Everything investigated on this computer, with status and root-cause state. |
+| **Org memory** | What has been learned about each org, and a button to check it against the org. See below. |
+
+![Get started: set-up checks and connected orgs](docs/images/web-get-started.png)
+
+### How an investigation runs from the page
+
+The investigation itself is done by Claude Code. The page has three ways to get there:
+
+1. **Investigate with Claude Code.** The page starts Claude Code in the project folder without a
+   terminal (`claude -p`, with the ticket's instructions on standard input) and shows its
+   progress. It uses your Claude Code sign-in and usage. A typical ticket takes a few minutes.
+2. **Run it yourself.** The page shows one prompt to paste into Claude Code. The result appears
+   on the page as the files are written, because the page reads the ticket's folder.
+3. **Replay the recorded sample** (demo orgs, sample ticket only). Shows a complete result in
+   seconds without the AI: the real tools gather the evidence from the simulated org, and the
+   written analysis is the stored sample. The page labels it as a recorded sample.
+
+**Do this once before using option 1:** open a terminal in the project folder, run `claude`, sign
+in if asked, and answer yes when it asks whether you trust the folder. Until a folder is trusted,
+Claude Code ignores the project's permission list when it runs without a terminal, and the
+investigator's tools would all be refused. The page detects this and tells you.
+
+**From the page the investigator only advises.** Started this way, nobody is there to approve
+anything, so every tool that changes an org is refused, whatever the mode in `sfti.config.json`.
+You get the fix as a diff. To have it deployed to a sandbox and tested, use Claude Code itself in
+`apply` mode, where each write asks you.
+
+![Progress while the investigation runs](docs/images/web-progress.png)
+
+### What the page can and cannot do
+
+- It answers only on this computer: it binds to `127.0.0.1`, refuses requests addressed to any
+  other host name, and requires a token embedded in the page for anything that changes state.
+  There is no option to expose it on the network. Do not put it behind a public proxy.
+- It has **no route that changes a Salesforce org**. It reads (orgs, tickets, memory), creates
+  and deletes ticket folders on your disk, and starts investigations. A test scans its code for
+  any reference to the write functions.
+- It posts nothing to your ticket system. The comment tab is a draft with a copy button.
+- Pasted ticket text is stored as you pasted it in `tickets/<KEY>/attachments/`, on your disk
+  only. The structured `ticket.md`, the report and the comment are written without personal data.
+
+## Org memory: it learns your org
+
+Every investigation reads parts of an org. The investigator keeps what it saw, so the next ticket
+on the same org starts from knowledge instead of from zero.
+
+**What is remembered**, per org, in `knowledge/<org id>.json` on your computer:
+
+| | Where it comes from |
+|---|---|
+| **Components**: every class, trigger and flow that was retrieved, with what it does: its methods, the objects it queries, the fields it sets, what it calls; for a flow, when it runs and which fields it tests or writes | Automatically, each time source is retrieved |
+| **Objects**: which triggers, flows, validation rules and workflow rules run on each object | Automatically, when the automation on an object is listed |
+| **Links**: which component calls or uses which | Automatically, from the source and from Salesforce's dependency data |
+| **Facts**: short notes such as "CaseEscalationService decides case priority from the account's support tier" or "cases are also created in bulk by a nightly import", with topics and the file they were read from | Written by the investigator at the end of a ticket |
+
+**How it is used.** At the start of a ticket the investigator asks the memory about the ticket's
+subject ("voice calls", "case priority"…). It gets back the components and facts that relate, and
+goes to them first instead of rediscovering the org.
+
+**The double check.** Orgs change, so nothing is trusted because it was true last month:
+
+- When memory is recalled, the org is asked for the current last-modified date of every
+  remembered component involved. Anything modified since it was learned is flagged **changed**,
+  the facts about it are flagged **needs re-reading**, and the investigator reads it again.
+- When source is retrieved, it is compared with what was remembered. A difference is reported
+  ("changed since last seen in ticket ABC-12") and the memory is updated.
+- A component that no longer exists is reported as such.
+- **Memory is a lead, never evidence.** A report may only cite what was read from the org during
+  that investigation. The memory decides where to look first; it never appears as proof.
+
+**What it does not hold:** no record data, no personal data (a note containing an email address
+is refused), no conclusions about individual tickets. It is keyed by org Id, not by alias, so
+re-pointing an alias does not mix two orgs. The folder is never committed or uploaded.
+
+The **Org memory** page shows all of it, with a "Check against the org" button. In Claude Code
+the tools are `recall_org_knowledge`, `org_map`, `verify_org_knowledge`, `remember_org_fact` and
+`forget_org_fact`.
+
+![Org memory: objects, components with what they do, remembered facts and links](docs/images/web-org-memory.png)
+
+Limits to know: the change check uses last-modified dates for Apex classes, triggers and flows;
+other component types are compared only when they are retrieved again. The "what it does"
+outline is read from the source text with simple rules, so it can miss things (dynamic calls,
+for instance). Both are reasons the memory is treated as a lead.
+
 ## Try it in five minutes, without a Salesforce org
+
+The steps below use Claude Code directly. With the web interface the same thing is:
+install (step 1), then `python -m webapp --demo`, then **Try the sample ticket**.
+
 
 You need Python 3.11 or newer, git and Claude Code. The simulated orgs contain a planted bug and a
 ticket about it.
@@ -279,7 +399,7 @@ generator disagree.
 | What | How it is set |
 |---|---|
 | Write tools | all 6 in `ask`: every call prompts |
-| Read-only tools | all 31 in `allow` |
+| Read-only tools | all 36 in `allow` |
 | Direct `sf` / `sfdx` in Bash | denied by permission rule and by the hook |
 | Guard hook | installed for Bash, Edit and Write |
 | Edits to `sfti.config.json`, `.mcp.json`, `.claude/settings.json`, `.claude/hooks/` | denied by permission rule and by the hook |
@@ -305,6 +425,10 @@ to equal its output; the test above confirms the content is equal. If `--check` 
 difference in formatting, run the generator once. See decisions 19 and 43 in
 [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+Since then the file has been regenerated once by the generator itself, with the owner's explicit
+go-ahead, to add the five org-memory tools to the `allow` list (decision 52). Nothing else in it
+changed.
+
 ## Tool reference
 
 Read-only tools run without a prompt. Paths in results are relative to `tickets/<KEY>/`.
@@ -315,6 +439,8 @@ Read-only tools run without a prompt. Paths in results are relative to `tickets/
 | `list_orgs`, `org_info` | Authenticated orgs; classification of one org |
 | `init_ticket`, `list_tickets`, `search_tickets` | Ticket folder; earlier tickets ("has this been seen before?") |
 | `jira_get_ticket` | Optional, off by default: read one ticket from Jira Server / Data Center |
+| `recall_org_knowledge`, `org_map`, `verify_org_knowledge` | The org memory: what earlier tickets learned about this org, searched by subject and checked against the org's current state |
+| `remember_org_fact`, `forget_org_fact` | Save a fact about how the org is built, or remove one that no longer holds. Local files only |
 | `retrieve_components` | Retrieve `Type:Name` components into the ticket's git repository (at most 50 per call) |
 | `list_files`, `search_metadata`, `read_file` | List, regex-search and read what was retrieved, with line numbers |
 | `summarize_flow` | Outline of a Flow: trigger, entry conditions, decisions, record operations, order |
@@ -456,6 +582,23 @@ queries and redaction, metadata, logs, tests, the whole write path, the report c
 server over stdio and the hook. It runs against the **simulator**, through the real subprocess
 path.
 
+### The web interface and the org memory
+
+- The page was driven in a real browser (Chromium, desktop and phone width) through the whole
+  demo flow: set-up checks, sample ticket, replay, result tabs, org memory and its check. No page
+  errors. Its server is covered by tests, including the refusals (foreign host, missing token).
+- Starting Claude Code the way the page does was tried once in the build container with a
+  one-line prompt: it started, the project's MCP server connected with all 42 tools, and the
+  progress stream was read correctly. That call is also how the "folder not trusted" requirement
+  was found.
+- **Not done:** a complete AI investigation started from the page. The build container's folder
+  is not trusted by Claude Code for unattended runs, and changing that is not something the
+  build session should do. In the tests, Claude Code is replaced by a stand-in that speaks the
+  same protocol. The first real run from the page will be yours: use the sample ticket on the
+  demo orgs, and compare with `samples/DEMO-101/expected/`.
+- The org memory's change check was exercised against the simulator only. On a real org it
+  depends on `LastModifiedDate` of `ApexClass`, `ApexTrigger` and `Flow` through the Tooling API.
+
 ### Not verified against a live org
 
 No Salesforce org was reachable while this was built. The following comes from documentation and
@@ -508,7 +651,12 @@ of them reports an error for a section, that is one of the items above.
 | The hook blocks an innocent command | See the known false positive above. Rephrase the command, or run it yourself. |
 | A hook error is shown on every tool call | `python` (or `SFTI_PYTHON`) does not run in the shell Claude Code uses for hooks. Set `SFTI_PYTHON` to the full path of your interpreter and restart Claude Code. The error does not block the call. |
 | Every tool call is blocked right after pulling | The hook cannot lock a session by design. If it happens, check that `.claude/hooks/guard.py` exists and that `python` (or `SFTI_PYTHON`) runs; then report it. To get out, run `python scripts/generate_settings.py --no-guard` in your own terminal. |
-| You want to start a ticket again | Delete `tickets/<KEY>/` yourself. |
+| You want to start a ticket again | Delete `tickets/<KEY>/` yourself, or use **Delete** on the ticket's page. |
+| The page says "Claude Code has not been used in this folder yet" | Run `claude` once in a terminal in the project folder and accept the question about trusting the folder. Without that, Claude Code ignores the project's permission list when the page starts it. |
+| The page says "The sf-investigator tools did not start" | Same cause as a failed server in `/mcp`: see the first row. The page starts Claude Code with the Python that runs the page, so start the page from the project's virtual environment. |
+| `python -m webapp` says it could not listen | Another program uses port 8765. Use `--port 9000`. |
+| The page shows a result but the status stays "In progress" | The report or the comment is not written yet. If Claude Code stopped, open the ticket's **Activity** tab for the last step, then start again. |
+| The org memory looks wrong | Press **Check against the org** on the Org memory page. To start over for one org, delete its file in `knowledge/`. |
 
 ## Optional: reading tickets from Jira (Phase 5)
 
@@ -561,8 +709,9 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-No org, no Salesforce CLI and no network are needed. Integration tests start the simulator's `sf`
-launcher exactly as the wrapper would start the real CLI. `.github/workflows/tests.yml` runs the
+No org, no Salesforce CLI, no Claude Code and no network are needed. Integration tests start the
+simulator's `sf` launcher exactly as the wrapper would start the real CLI; the web interface is
+tested through a real HTTP server on a free local port, with a stand-in for Claude Code. `.github/workflows/tests.yml` runs the
 suite on Linux, Windows and macOS.
 
 After adding or renaming a tool in `mcp_server/server.py`, regenerate the permission lists, which
