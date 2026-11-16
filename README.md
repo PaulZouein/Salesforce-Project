@@ -7,6 +7,9 @@ With your approval it can also deploy the fix to a sandbox, test it and roll it 
 
 Production orgs are read-only. That is enforced in code and has no override.
 
+Supported systems: **Windows and macOS.** Linux is not a supported system: it happens to work
+(the tool was built on it) but is no longer tested in CI.
+
 **The quickest way to see it:** after installing (three commands, below), run
 
 ```
@@ -174,7 +177,7 @@ ticket about it.
 
 **1. Install.** From the project folder:
 
-macOS and Linux:
+macOS:
 
 ```bash
 python3 -m venv .venv
@@ -199,7 +202,7 @@ python -m simulator setup
 It prints the path of a launcher and the line to set `SFTI_SF_EXECUTABLE`. Set it in the same
 terminal:
 
-macOS and Linux:
+macOS:
 
 ```bash
 export SFTI_SF_EXECUTABLE="$PWD/simulator/state/bin/sf"
@@ -258,9 +261,9 @@ Salesforce CLI.
 - If you start Claude Code from a terminal where the virtual environment is active, `python` is
   the right one and you have nothing to set.
 - Otherwise set `SFTI_PYTHON` to the full path of the environment's interpreter, for example
-  `export SFTI_PYTHON="$PWD/.venv/bin/python"` (macOS, Linux) or
+  `export SFTI_PYTHON="$PWD/.venv/bin/python"` (macOS) or
   `$env:SFTI_PYTHON = "$PWD\.venv\Scripts\python.exe"` (Windows).
-- On macOS and Linux systems that only have `python3`, set `SFTI_PYTHON=python3`.
+- On a Mac that only has `python3`, set `SFTI_PYTHON=python3`.
 
 **4. Log in to your orgs** with the Salesforce CLI, in your own terminal (the assistant never runs
 `sf` itself):
@@ -575,9 +578,8 @@ The error envelope (`name`, `message`, `exitCode`, `status`, `stack`) was captur
 
 ### Verified by the test suite
 
-The suite ran on Linux in the build container, and on Linux, Windows and macOS (Python 3.11 and
-3.13) in GitHub Actions, where all six jobs pass (Linux, Python 3.13: 583 passed, 1 expected
-failure, which is the hook's documented false positive). It covers the CLI wrapper, the guard,
+The suite runs in GitHub Actions on Windows and macOS (Python 3.11 and 3.13), and ran on Linux in
+the build container. One test is an expected failure: the hook's documented false positive. It covers the CLI wrapper, the guard,
 queries and redaction, metadata, logs, tests, the whole write path, the report checks, the MCP
 server over stdio and the hook. It runs against the **simulator**, through the real subprocess
 path.
@@ -712,7 +714,7 @@ python -m pytest
 No org, no Salesforce CLI, no Claude Code and no network are needed. Integration tests start the
 simulator's `sf` launcher exactly as the wrapper would start the real CLI; the web interface is
 tested through a real HTTP server on a free local port, with a stand-in for Claude Code. `.github/workflows/tests.yml` runs the
-suite on Linux, Windows and macOS.
+suite on Windows and macOS.
 
 After adding or renaming a tool in `mcp_server/server.py`, regenerate the permission lists, which
 are built from the server's own tool lists:
