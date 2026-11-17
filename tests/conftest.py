@@ -96,7 +96,7 @@ class Project:
 
 def _private_folders_snapshot() -> dict[str, tuple[int, int]]:
     seen: dict[str, tuple[int, int]] = {}
-    for name in ("tickets", "knowledge", "audit"):
+    for name in ("tickets", "knowledge", "audit", "usage"):
         folder = ROOT / name
         if folder.is_dir():
             for path in folder.rglob("*"):
@@ -108,13 +108,13 @@ def _private_folders_snapshot() -> dict[str, tuple[int, int]]:
 
 @pytest.fixture(scope="session", autouse=True)
 def tests_never_touch_real_tickets_or_org_memory():
-    """Every test works in a temporary folder. The tickets, org memory and audit data in this checkout belong
+    """Every test works in a temporary folder. The tickets, org memory, audit data and usage ledger in this checkout belong
     to whoever runs the suite, and running it must leave them exactly as they were."""
     before = _private_folders_snapshot()
     yield
     after = _private_folders_snapshot()
     changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
-    assert not changed, ("The test run changed files in tickets/, knowledge/ or audit/ of this checkout "
+    assert not changed, ("The test run changed files in tickets/, knowledge/, audit/ or usage/ of this checkout "
                          f"(unless you were using the investigator at the same time): {changed[:10]}")
 
 

@@ -32,12 +32,14 @@ from core.errors import InputValidationError, SfInvestigatorError, WorkspaceErro
 from core.sf_cli import SfCli
 from core.workspace import validate_ticket_key
 
-from . import __version__, agent, tickets
+from . import __version__, agent, tickets, usage
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_BODY_BYTES = 1_000_000
 #: An attached file travels as base64 inside JSON, which is a third larger than the file.
 MAX_UPLOAD_BODY_BYTES = tickets.MAX_ATTACHMENT_BYTES * 4 // 3 + 4096
+#: A ticket may come with its PDF (base64 in JSON) and the text read from it.
+MAX_TICKET_BODY_BYTES = tickets.MAX_TICKET_PDF_BYTES * 4 // 3 + tickets.MAX_TICKET_CHARS * 4 + 65536
 DEFAULT_PORT = 8765
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
@@ -238,6 +240,16 @@ class App:
     def memory_map(self, org_id: str) -> dict[str, Any]:
         return self.investigator().knowledge.org_map(org_id)
 
+    def usage(self) -> dict[str, Any]:
+        """What investigations cost: the runs going on now, the last one, today, and the plan's limits."""
+        book = self.runner.book
+        entries = book.entries()
+        running = [{"key": key, "started_at": run.started_at, "options": run.options or None,
+                    "usage": run.meter.snapshot()}
+                   for key, run in list(self.runner.runs.items()) if run.status == "running" and run.runner == "agent"]
+        return {"running": running, "last": entries[-1] if entries else None, "today": book.today(entries),
+                "plan": book.load_plan(), "note": usage.PRICING_NOTE}
+
     def memory_search(self, org_id: str, words: str) -> dict[str, Any]:
         """Search one org's memory, as the investigator does at the start of a ticket. Local; asks no org."""
         if not words.strip():
@@ -281,6 +293,7 @@ _MEMORY_ROUTE = re.compile(r"^/api/memory/(00D[A-Za-z0-9]{12,15})(?:/(verify|sea
 _JIRA_ROUTE = re.compile(r"^/api/jira/([^/]+)$")
 _REPORT_ROUTE = re.compile(r"^/tickets/([^/]+)/report\.html$")
 _RESULT_ROUTE = re.compile(r"^/tickets/([^/]+)/result\.zip$")
+_PDF_ROUTE = re.compile(r"^/tickets/([^/]+)/ticket\.pdf$")
 
 
 def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
@@ -384,6 +397,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return self._guarded(app.sample_ticket)
             if path == "/api/memory":
                 return self._guarded(app.memory_orgs)
+            if path == "/api/usage":
+                return self._guarded(app.usage)
             if path == "/api/tickets":
                 return self._guarded(lambda: {"tickets": tickets.list_tickets(inv(), app.runner.summaries())})
             match = _ORG_ROUTE.match(path)
@@ -408,7 +423,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                         after = int((query.get("after") or ["0"])[0] or 0)
                         return {"events": app.runner.events(key, folder, after),
                                 "run": app.runner.summary(key, folder)}
-                    return tickets.ticket_detail(inv(), key, app.runner.summary(key, folder))
+                    detail = tickets.ticket_detail(inv(), key, app.runner.summary(key, folder))
+                    detail["usage_total"] = app.runner.book.for_ticket(key)
+                    return detail
 
                 return self._guarded(view)
             match = _REPORT_ROUTE.match(path)
@@ -427,6 +444,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                                       download_as=f"{key}-result.zip")
                 except (SfInvestigatorError, OSError):
                     return self._error(HTTPStatus.NOT_FOUND, "No report for this ticket yet.")
+            match = _PDF_ROUTE.match(path)
+            if match:
+                try:
+                    key = validate_ticket_key(match.group(1))
+                    pdf = inv().workspace.ticket_dir(key) / "attachments" / tickets.ORIGINAL_PDF_NAME
+                    return self._send(200, pdf.read_bytes(), "application/pdf")
+                except (SfInvestigatorError, OSError):
+                    return self._error(HTTPStatus.NOT_FOUND, "This ticket was not given as a PDF.")
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
         do_HEAD = do_GET  # noqa: N815
@@ -437,16 +462,27 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if not self._local_only():
                 return
             path = unquote(urlsplit(self.path).path)
-            body = self._body(MAX_UPLOAD_BODY_BYTES if path.endswith("/attachments") else MAX_BODY_BYTES)
+            limit = (MAX_UPLOAD_BODY_BYTES if path.endswith("/attachments")
+                     else MAX_TICKET_BODY_BYTES if path in ("/api/tickets", "/api/ticket-pdf") else MAX_BODY_BYTES)
+            body = self._body(limit)
             if body is None:
                 return
             inv = app.investigator
             if path == "/api/demo":
                 return self._guarded(lambda: app.set_demo(bool(body.get("enabled")), reset=bool(body.get("reset"))))
+            if path == "/api/ticket-pdf":
+                def read_pdf() -> dict[str, Any]:
+                    found = tickets.read_pdf(_decode(body.get("content_base64")))
+                    body_text = found["text"] if found["readable"] else ""
+                    return {**found, "key": tickets.detect_key(body_text), "title": tickets.detect_title(body_text)}
+                return self._guarded(read_pdf)
             if path == "/api/tickets":
                 def create() -> dict[str, Any]:
+                    pdf = _decode(body["pdf_base64"]) if body.get("pdf_base64") else None
                     request = tickets.create_ticket(inv(), body.get("text"), body.get("org"), key=body.get("key"),
-                                                    sandbox=body.get("sandbox"), model=body.get("model"))
+                                                    sandbox=body.get("sandbox"), model=body.get("model"),
+                                                    economy=bool(body.get("economy")),
+                                                    budget_usd=body.get("budget_usd"), pdf=pdf)
                     return {"ticket": request, "prompt": tickets.agent_prompt(request)}
                 return self._guarded(create)
             match = _MEMORY_ROUTE.match(path)
@@ -469,8 +505,13 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     if app.runner.is_running(key):
                         raise WorkspaceError("This ticket is already being investigated.")
                     folder = inv().workspace.ticket_dir(key)
+                    if "budget_usd" in body:
+                        tickets.check_budget(body.get("budget_usd"))  # refused before anything is changed
                     if "model" in body:
                         tickets.set_model(folder, body.get("model"))
+                    if "economy" in body or "budget_usd" in body:
+                        tickets.set_run_options(folder, economy=(bool(body["economy"]) if "economy" in body else None),
+                                                budget_usd=body.get("budget_usd", "unchanged"))
                     if str(body.get("note") or "").strip():
                         tickets.add_follow_up(inv(), key, body["note"])
                     return {"run": app.runner.start(key, runner).summary()}
@@ -482,11 +523,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if match and match.group(2) == "attachments":
                 def attach() -> dict[str, Any]:
                     key = validate_ticket_key(match.group(1))
-                    try:
-                        data = base64.b64decode(str(body.get("content_base64") or ""), validate=True)
-                    except (binascii.Error, ValueError):
-                        raise InputValidationError("The file could not be read.") from None
-                    return tickets.save_attachment(inv(), key, body.get("name"), data)
+                    return tickets.save_attachment(inv(), key, body.get("name"), _decode(body.get("content_base64")))
 
                 return self._guarded(attach)
             if match and match.group(2) == "cancel":
@@ -513,6 +550,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
     return Handler
+
+
+def _decode(value: Any) -> bytes:
+    """A file sent by the page (base64 in JSON)."""
+    try:
+        return base64.b64decode(str(value or ""), validate=True)
+    except (binascii.Error, ValueError):
+        raise InputValidationError("The file could not be read.") from None
 
 
 def create_server(app: App, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:

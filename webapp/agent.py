@@ -13,6 +13,10 @@ Two runners:
     there to approve a write, so none can happen;
   - file edits are accepted so that it can write the ticket folder. The project's permission
     rules still deny edits to the safety files.
+
+  With **Use fewer tokens** the run also uses Sonnet (unless a model was chosen), medium effort,
+  no subagents and no skill listing, and is told to economize. A spending limit, when set, is
+  passed to Claude Code (``--max-budget-usd``), which stops the run when it is reached.
 * ``sample``: replays the recorded DEMO-101 investigation against the simulated org, without the
   AI agent (see ``simulator.demo``).
 
@@ -34,6 +38,7 @@ from typing import Any, Callable
 from core.app import Investigator
 
 from .tickets import MODEL_RE, agent_prompt, has_progress, read_request, utc_now
+from .usage import UsageBook, UsageMeter
 
 TOOL_PREFIX = "mcp__sf-investigator__"
 DEFAULT_TIMEOUT_SECONDS = 45 * 60
@@ -45,6 +50,10 @@ BUILTIN_ALLOWED = ("Read", "Glob", "Grep", "Skill", "Task", "Agent", "TodoWrite"
 BUILTIN_REFUSED = ("Bash", "WebFetch", "WebSearch")
 #: Model names offered on the page. Empty means "whatever Claude Code uses by default".
 MODEL_CHOICES = {"": "Claude Code's default", "sonnet": "Sonnet: faster, uses less", "opus": "Opus: most thorough"}
+#: What "Use fewer tokens" changes. Each item is a command-line option; see build_command.
+ECONOMY_MODEL = "sonnet"
+ECONOMY_EFFORT = "medium"
+ECONOMY_REFUSED = ("Task", "Agent")  # subagents start a fresh context and re-read what the main run has read
 
 #: What each tool call means, in words a non-developer can follow.
 TOOL_LABELS = {
@@ -93,7 +102,7 @@ BUILTIN_LABELS = {
 }
 
 
-def tool_permissions() -> tuple[list[str], list[str]]:
+def tool_permissions(*, economy: bool = False) -> tuple[list[str], list[str]]:
     """``(allowed, refused)`` tool names for an unattended investigation.
 
     Both come from the MCP server's own registry, so a tool that changes an org can never be in
@@ -101,25 +110,37 @@ def tool_permissions() -> tuple[list[str], list[str]]:
     """
     from mcp_server.server import READ_ONLY_TOOLS, WRITE_TOOLS
 
-    allowed = [TOOL_PREFIX + name for name in READ_ONLY_TOOLS if name not in WRITE_TOOLS] + list(BUILTIN_ALLOWED)
-    refused = [TOOL_PREFIX + name for name in WRITE_TOOLS] + list(BUILTIN_REFUSED)
+    builtin_refused = list(BUILTIN_REFUSED) + (list(ECONOMY_REFUSED) if economy else [])
+    allowed = [TOOL_PREFIX + name for name in READ_ONLY_TOOLS if name not in WRITE_TOOLS] + \
+        [name for name in BUILTIN_ALLOWED if name not in builtin_refused]
+    refused = [TOOL_PREFIX + name for name in WRITE_TOOLS] + builtin_refused
     return allowed, refused
 
 
 def chosen_model(request: dict[str, Any]) -> str | None:
-    """The model for this run: the ticket's choice, else ``SFTI_CLAUDE_MODEL``, else Claude Code's default."""
+    """The model for this run: the ticket's choice, else ``SFTI_CLAUDE_MODEL``, else Sonnet when the ticket
+    asks to use fewer tokens, else Claude Code's default."""
     value = str(request.get("model") or os.environ.get("SFTI_CLAUDE_MODEL") or "").strip()
+    if not value and request.get("economy"):
+        value = ECONOMY_MODEL
     return value if value and MODEL_RE.match(value) else None
 
 
-def build_command(executable: str, root: Path, model: str | None = None) -> list[str]:
+def build_command(executable: str, root: Path, model: str | None = None, *, economy: bool = False,
+                  budget_usd: float | None = None) -> list[str]:
     """The exact command line of an unattended investigation. The module text says what each part is for."""
-    allowed, refused = tool_permissions()
+    allowed, refused = tool_permissions(economy=economy)
     command = [executable, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
     server_config = Path(root) / ".mcp.json"
     if server_config.is_file():
         command += ["--mcp-config", str(server_config), "--strict-mcp-config"]
     command += ["--allowedTools", ",".join(allowed), "--disallowedTools", ",".join(refused)]
+    if economy:
+        # The investigator reads the project's step descriptions as files (the prompt names them), so the
+        # list of every skill on the computer does not need to be in its context.
+        command += ["--effort", ECONOMY_EFFORT, "--disable-slash-commands"]
+    if budget_usd:
+        command += ["--max-budget-usd", f"{float(budget_usd):.2f}"]
     if model:
         command += ["--model", model]
     return command
@@ -178,17 +199,26 @@ def tidy_event(event: dict[str, Any], root: Path) -> dict[str, Any]:
     return {**event, "detail": detail}
 
 
-def events_from_stream_line(line: str) -> list[dict[str, Any]]:
-    """Turn one line of Claude Code's ``stream-json`` output into zero or more interface events."""
+def parse_stream_line(line: str) -> dict[str, Any] | None:
+    """One line of Claude Code's ``stream-json`` output, or ``None`` if it is not a JSON object."""
     line = line.strip()
     if not line:
-        return []
+        return None
     try:
         message = json.loads(line)
     except ValueError:
-        return []
-    if not isinstance(message, dict):
-        return []
+        return None
+    return message if isinstance(message, dict) else None
+
+
+def events_from_stream_line(line: str) -> list[dict[str, Any]]:
+    """Turn one line of Claude Code's ``stream-json`` output into zero or more interface events."""
+    message = parse_stream_line(line)
+    return events_from_message(message) if message else []
+
+
+def events_from_message(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """The interface events of one stream message."""
     kind = message.get("type")
     events: list[dict[str, Any]] = []
     if kind == "system" and message.get("subtype") == "init":
@@ -221,22 +251,36 @@ def events_from_stream_line(line: str) -> list[dict[str, Any]]:
                 events.append({"kind": "warn", "label": "A step was refused or failed", "detail": str(content)[:300]})
     elif kind == "result":
         ok = message.get("subtype") == "success" and not message.get("is_error")
-        events.append({
-            "kind": "done" if ok else "error",
-            "label": "Investigation finished" if ok else "The investigation stopped before finishing",
-            "detail": (str(message.get("result") or "")[:1500] or None),
+        figures = {
             "turns": message.get("num_turns"),
             "duration_seconds": round(message.get("duration_ms", 0) / 1000) if message.get("duration_ms") else None,
             "cost_usd": message.get("total_cost_usd"),
-        })
+        }
+        if message.get("subtype") == "error_max_budget_usd":
+            events.append({"kind": "warn", "label": "Stopped at your spending limit", "budget_stop": True,
+                           "detail": "What it found so far is kept in the ticket folder. Raise the limit, or "
+                                     "remove it, and start it again: it continues from where it stopped.",
+                           **figures})
+        else:
+            events.append({
+                "kind": "done" if ok else "error",
+                "label": "Investigation finished" if ok else "The investigation stopped before finishing",
+                "detail": (str(message.get("result") or "")[:1500] or None),
+                **figures,
+            })
     return events
 
 
 class Run:
     """One investigation in progress or finished."""
 
-    def __init__(self, key: str, runner: str, folder: Path):
+    def __init__(self, key: str, runner: str, folder: Path, *, options: dict[str, Any] | None = None,
+                 on_finish: Callable[["Run"], None] | None = None):
         self.key, self.runner, self.folder = key, runner, folder
+        self.options = options or {}
+        self.meter = UsageMeter()
+        self._on_finish = on_finish
+        self._finished_once = False
         self.status = "running"
         self.started_at = utc_now()
         self.finished_at: str | None = None
@@ -270,11 +314,19 @@ class Run:
             (self.folder / "run.json").write_text(json.dumps(self.summary(), indent=2), encoding="utf-8")
         except OSError:
             pass
+        if self._on_finish and not self._finished_once:
+            self._finished_once = True
+            try:
+                self._on_finish(self)
+            except Exception:  # noqa: BLE001 - keeping count must never break a run
+                pass
 
     def summary(self) -> dict[str, Any]:
         last = self.events[-1] if self.events else None
         return {"status": self.status, "runner": self.runner, "started_at": self.started_at,
                 "finished_at": self.finished_at, "events": self._count,
+                "options": self.options or None,
+                "usage": self.meter.snapshot() if self.runner == "agent" else None,
                 "last": {k: last[k] for k in ("kind", "label", "detail") if k in last} if last else None}
 
 
@@ -312,6 +364,16 @@ class Runner:
         self._child_env = child_env
         self._timeout = timeout
         self.runs: dict[str, Run] = {}
+        self.book = UsageBook(self.root)
+
+    def _record(self, run: Run) -> None:
+        """Keep what a run used. Runs that never reached Claude (the recorded sample, a missing install) cost nothing."""
+        if run.runner != "agent" or not run.meter.used:
+            return
+        self.book.record({"key": run.key, "runner": run.runner, "status": run.status, "started_at": run.started_at,
+                          "finished_at": run.finished_at, **{k: v for k, v in run.options.items() if v is not None},
+                          **{k: v for k, v in run.meter.snapshot().items() if k in ("tokens", "cost_usd", "basis",
+                                                                                      "models")}})
 
     def summaries(self) -> dict[str, dict[str, Any]]:
         return {key: run.summary() for key, run in self.runs.items()}
@@ -333,7 +395,12 @@ class Runner:
             return self.runs[key]
         inv = self._investigator()
         folder = inv.workspace.ticket_dir(key)
-        run = Run(key, runner, folder)
+        options = None
+        if runner == "agent":
+            request = read_request(folder)
+            options = {"model": chosen_model(request), "economy": bool(request.get("economy")),
+                       "budget_usd": request.get("budget_usd")}
+        run = Run(key, runner, folder, options=options, on_finish=self._record)
         self.runs[key] = run
         (folder / "run.json").write_text(json.dumps(run.summary(), indent=2), encoding="utf-8")
         target = self._run_sample if runner == "sample" else self._run_agent
@@ -403,7 +470,8 @@ class Runner:
         request = read_request(run.folder)
         prompt = agent_prompt(request, resume=has_progress(run.folder))
         try:
-            command = build_command(executable, self.root, chosen_model(request))
+            command = build_command(executable, self.root, chosen_model(request), economy=bool(request.get("economy")),
+                                    budget_usd=request.get("budget_usd"))
         except ImportError as exc:
             run.add({"kind": "error", "label": "The sf-investigator tools are not installed",
                      "detail": f"{exc}. Run the start script again (see QUICKSTART.md), then start the investigation again."})
@@ -438,7 +506,7 @@ class Runner:
                 del stderr_tail[:-20]
 
         threading.Thread(target=drain_stderr, daemon=True).start()
-        finished_ok = False
+        finished_ok = budget_stop = False
         try:
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(prompt)
@@ -446,8 +514,15 @@ class Runner:
             for line in process.stdout:
                 if run.status != "running":
                     break  # stopped, timed out or failed for good: what it still prints is not reported
-                for event in events_from_stream_line(line):
+                message = parse_stream_line(line)
+                if message is None:
+                    continue
+                if run.meter.take(message) == "plan" and run.meter.plan:
+                    self.book.save_plan(run.meter.plan)
+                for event in events_from_message(message):
                     fatal = event.pop("fatal", False)
+                    if event.pop("budget_stop", False):
+                        budget_stop = True
                     if event["kind"] == "done":
                         finished_ok = True
                     run.add(tidy_event(event, self.root))
@@ -465,6 +540,9 @@ class Runner:
             timer.cancel()
         if run.status != "running":
             return  # cancelled or timed out; already recorded
+        if budget_stop:
+            run.finish("incomplete")
+            return
         if finished_ok and process.returncode == 0:
             if (run.folder / "report.md").is_file():
                 run.finish("finished")

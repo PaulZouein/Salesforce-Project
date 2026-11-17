@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Investigate Salesforce bug tickets with evidence: root cause, smallest fix, verified in a sandbox."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["mcp>=1.10"]
+dependencies = ["mcp>=1.10", "pypdf>=4.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

@@ -1,4 +1,4 @@
-"""Tickets as the interface sees them: created from pasted text, with a status read from the files.
+"""Tickets as the interface sees them: created from pasted text or a PDF, with a status read from the files.
 
 The status of a ticket is derived from what is on disk in ``tickets/<KEY>/``, not from what the
 interface remembers. It is therefore the same whether the investigation was started from the
@@ -28,7 +28,13 @@ MAX_FOLLOW_UP_CHARS = 20_000
 MAX_ATTACHMENT_BYTES = 5_000_000
 MAX_ATTACHMENTS = 20
 ORIGINAL_NAME = "ticket-original.txt"
+ORIGINAL_PDF_NAME = "ticket-original.pdf"
 REQUEST_NAME = "request.json"
+#: A ticket given as a PDF (an export or a printout from Jira).
+MAX_TICKET_PDF_BYTES = 10_000_000
+MAX_PDF_PAGES = 80
+#: Spending limit per run, in US dollars.
+MIN_BUDGET_USD, MAX_BUDGET_USD = 0.05, 100.0
 #: What may be attached to a ticket: text the investigator can read, and images and PDFs it can look at.
 ATTACHMENT_TYPES = frozenset({".txt", ".log", ".md", ".csv", ".json", ".xml", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 #: What the result download contains, when present.
@@ -41,6 +47,7 @@ _KEY_LINE_RE = re.compile(r"^\s*(?:key|ticket|issue)\s*[:#]\s*([A-Za-z][A-Za-z0-
 _KEY_ANY_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,19}-\d{1,9})\b")
 _TITLE_LINE_RE = re.compile(r"^\s*(?:title|summary|subject)\s*:\s*(.+)$", re.I | re.M)
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+_LEADING_KEY_RE = re.compile(r"^\[?[A-Z][A-Z0-9_]{1,19}-\d{1,9}\]?\s*[:\-\u2013\u2014|]?\s+")
 
 
 def utc_now() -> str:
@@ -56,19 +63,80 @@ def detect_key(text: str) -> str | None:
 def detect_title(text: str) -> str | None:
     match = _TITLE_LINE_RE.search(text)
     if match:
-        return _EMAIL_RE.sub("[email]", match.group(1).strip())[:160]
+        return _tidy_title(match.group(1))
     for line in text.splitlines():
         line = line.strip()
         if len(line) > 12 and not re.match(r"^[\w ]{1,20}:", line):
-            return _EMAIL_RE.sub("[email]", line)[:160]
+            return _tidy_title(line)
     return None
 
 
+def _tidy_title(line: str) -> str | None:
+    """A title without the key in front of it (Jira's exports and printouts start with "[ABC-123] ...")."""
+    title = _LEADING_KEY_RE.sub("", line.strip()) or line.strip()
+    return _EMAIL_RE.sub("[email]", title)[:160] or None
+
+
+def read_pdf(data: bytes) -> dict[str, Any]:
+    """The text of a ticket given as a PDF: ``{"text", "pages", "readable"}``.
+
+    ``readable`` is false for a PDF with (almost) no text in it, such as a scan. The investigator
+    can still read such a PDF itself: Claude Code opens PDFs, images included.
+    """
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        raise InputValidationError("The file is empty.")
+    if len(data) > MAX_TICKET_PDF_BYTES:
+        raise InputValidationError(f"The PDF is too large ({MAX_TICKET_PDF_BYTES // 1_000_000} MB at most).")
+    if not bytes(data[:1024]).lstrip().startswith(b"%PDF"):
+        raise InputValidationError("That file is not a PDF.", hint="Choose the PDF exported or printed from Jira.")
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        raise WorkspaceError("Reading PDF files needs the pypdf package, which is not installed.",
+                             hint="Start the investigator with its start script again: it installs what is missing.") from None
+    try:
+        reader = PdfReader(io.BytesIO(bytes(data)))
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise InputValidationError("The PDF is protected by a password.", hint="Export it again without one.")
+        total = len(reader.pages)
+        parts = [(page.extract_text() or "") for page in reader.pages[:MAX_PDF_PAGES]]
+    except SfInvestigatorError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any parsing failure means the same thing to the user
+        raise InputValidationError("The PDF could not be read.", hint=f"{type(exc).__name__}: {str(exc)[:200]}") from None
+    lines = [line.rstrip() for line in "\n\n".join(parts).replace("\x00", "").splitlines()]
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    if total > MAX_PDF_PAGES:
+        cleaned += f"\n\n[Only the first {MAX_PDF_PAGES} of {total} pages were read as text.]"
+    return {"text": cleaned[:MAX_TICKET_CHARS], "pages": total, "readable": len(cleaned) >= 40}
+
+
+def check_budget(value: Any) -> float | None:
+    """A spending limit in US dollars, or ``None`` for none."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        amount = float(str(value).strip().lstrip("$"))
+    except ValueError:
+        raise InputValidationError("The spending limit must be an amount in dollars, for example 1.50.") from None
+    if not MIN_BUDGET_USD <= amount <= MAX_BUDGET_USD:
+        raise InputValidationError(f"The spending limit must be between ${MIN_BUDGET_USD:.2f} and ${MAX_BUDGET_USD:.0f}.")
+    return round(amount, 2)
+
+
 def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = None,
-                  sandbox: str | None = None, model: str | None = None) -> dict[str, Any]:
-    """Create ``tickets/<KEY>/`` from pasted ticket text and record which org to investigate."""
+                  sandbox: str | None = None, model: str | None = None, economy: bool = False,
+                  budget_usd: Any = None, pdf: bytes | None = None) -> dict[str, Any]:
+    """Create ``tickets/<KEY>/`` from pasted ticket text (or a PDF of the ticket) and record which org to investigate."""
+    if pdf:
+        from_pdf = read_pdf(pdf)  # checked before anything is created
+        if not isinstance(text, str) or len(text.strip()) < 40:
+            text = from_pdf["text"] if from_pdf["readable"] else ""
+        text = ("[The ticket was given as a PDF: attachments/ticket-original.pdf. The text below was read from it.]"
+                "\n\n" + (text or "[No text could be read from the PDF: read the PDF itself.]"))
     if not isinstance(text, str) or len(text.strip()) < 40:
-        raise InputValidationError("Paste the whole ticket: description, comments and history.")
+        raise InputValidationError("Paste the whole ticket: description, comments and history.",
+                                   hint="Or upload the ticket as a PDF.")
     if len(text) > MAX_TICKET_CHARS:
         raise InputValidationError(f"The ticket text is too long ({MAX_TICKET_CHARS:,} characters at most).")
     key = (key or "").strip() or detect_key(text)
@@ -80,6 +148,7 @@ def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = N
     if not isinstance(org, str) or not org.strip():
         raise InputValidationError("Choose the org to investigate.")
     model = set_model(None, model)  # checked before anything is created
+    budget_usd = check_budget(budget_usd)
     folder = inv.workspace.tickets_root / key
     if (folder / ORIGINAL_NAME).exists() or (folder / "attachments" / ORIGINAL_NAME).exists():
         raise WorkspaceError(
@@ -87,11 +156,21 @@ def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = N
             hint="Open it from the ticket list, or delete it there first if you want to start again.")
     inv.init_ticket(key)
     attachments = folder / "attachments"
+    attachments.mkdir(exist_ok=True)
     (attachments / ORIGINAL_NAME).write_text(text, encoding="utf-8")
-    request = {"key": key, "title": detect_title(text), "org": org.strip(), "sandbox": (sandbox or "").strip() or None,
+    if pdf:
+        (attachments / ORIGINAL_PDF_NAME).write_bytes(bytes(pdf))
+    title = detect_title(text.split("\n\n", 1)[1] if pdf else text)
+    request = {"key": key, "title": title, "org": org.strip(), "sandbox": (sandbox or "").strip() or None,
                "created_at": utc_now(), "source": "web"}
+    if pdf:
+        request["pdf"] = ORIGINAL_PDF_NAME
     if model:
         request["model"] = model
+    if economy:
+        request["economy"] = True
+    if budget_usd:
+        request["budget_usd"] = budget_usd
     _write_request(folder, request)
     return request
 
@@ -123,6 +202,24 @@ def set_model(folder: Path | None, model: str | None) -> str | None:
     return model
 
 
+def set_run_options(folder: Path, *, economy: Any = None, budget_usd: Any = "unchanged") -> dict[str, Any]:
+    """Store how the next run should spend tokens: ``economy`` (use fewer tokens) and a spending limit."""
+    request = read_request(folder)
+    if economy is not None:
+        if economy:
+            request["economy"] = True
+        else:
+            request.pop("economy", None)
+    if budget_usd != "unchanged":
+        amount = check_budget(budget_usd)
+        if amount:
+            request["budget_usd"] = amount
+        else:
+            request.pop("budget_usd", None)
+    _write_request(folder, request)
+    return request
+
+
 # --- What the user adds after the ticket is created --------------------------------------------
 
 
@@ -130,7 +227,8 @@ def _attachment_names(folder: Path) -> list[str]:
     attachments = folder / "attachments"
     if not attachments.is_dir():
         return []
-    return sorted(p.name for p in attachments.iterdir() if p.is_file() and p.name != ORIGINAL_NAME)
+    return sorted(p.name for p in attachments.iterdir()
+                  if p.is_file() and p.name not in (ORIGINAL_NAME, ORIGINAL_PDF_NAME))
 
 
 def add_follow_up(inv: Investigator, key: str, text: str) -> dict[str, Any]:
@@ -161,7 +259,7 @@ def save_attachment(inv: Investigator, key: str, name: str, data: bytes) -> dict
         raise InputValidationError(
             f"Files of type '{suffix or 'unknown'}' are not accepted.",
             hint="Accepted: " + ", ".join(sorted(ATTACHMENT_TYPES)) + ".")
-    if clean == ORIGINAL_NAME or _FOLLOW_UP_RE.match(clean):
+    if clean in (ORIGINAL_NAME, ORIGINAL_PDF_NAME) or _FOLLOW_UP_RE.match(clean):
         raise InputValidationError("That file name is used by the investigator. Rename the file and try again.")
     if not data:
         raise InputValidationError("The file is empty.")
@@ -207,6 +305,9 @@ def agent_prompt(request: dict[str, Any], *, resume: bool = False) -> str:
         (f"Ticket {key} was submitted through the web interface and has already been worked on. Continue it."
          if resume else f"A new ticket, {key}, was submitted through the web interface."),
         f"Its full original text is in tickets/{key}/attachments/{ORIGINAL_NAME}. Read all of it, comments included.",
+        *([f"The ticket was given as a PDF, tickets/{key}/attachments/{ORIGINAL_PDF_NAME}; the text file holds what "
+           "could be read from it. Open the PDF itself for anything the text loses or lacks (tables, screenshots, "
+           "a scanned page)."] if request.get("pdf") else []),
         f"Read every other file in tickets/{key}/attachments/ as well: files named follow-up-NN.txt are what the "
         "user added after an earlier run (answers, corrections, new facts). They are part of the ticket, and the "
         "newest one wins where they disagree.",
@@ -236,6 +337,18 @@ def agent_prompt(request: dict[str, Any], *, resume: bool = False) -> str:
         "propose a change, and comment.md passes validate_comment.",
         "- If the root cause cannot be confirmed, say Not confirmed and what is missing. Do not guess.",
     ]
+    if request.get("economy"):
+        lines += [
+            "",
+            "The user asked to use as few tokens as the rules allow:",
+            "- Make independent tool calls together, in one step.",
+            "- Retrieve and read only what a hypothesis needs. Query only the fields you need. Do not read a "
+            "file twice, and read each SKILL.md once.",
+            "- Trace the execution path yourself: subagents are not available in this run.",
+            "- Keep ticket.md, the report and the comment short. Do not restate the ticket.",
+            "- The evidence rules do not change: every claim still cites an artifact, and the report still "
+            "passes validate_report.",
+        ]
     return "\n".join(lines)
 
 
@@ -339,6 +452,8 @@ def ticket_status(inv: Investigator, key: str, run: dict[str, Any] | None = None
         "created_at": request.get("created_at"),
         "source": request.get("source") or "claude-code",
         "model": request.get("model"),
+        "economy": bool(request.get("economy")),
+        "budget_usd": request.get("budget_usd"),
         "attachments": _attachment_names(folder),
         "stage": stage,
         "steps": steps,
@@ -374,6 +489,7 @@ def ticket_detail(inv: Investigator, key: str, run: dict[str, Any] | None = None
     ticket = read("ticket.md")
     out["ticket_html"] = markdown_to_html(ticket) if ticket and "<title>" not in ticket[:200] else None
     out["original_text"] = read(f"attachments/{ORIGINAL_NAME}")
+    out["has_pdf"] = (folder / "attachments" / ORIGINAL_PDF_NAME).is_file()
     out["comment_markdown"] = read("comment.md")
     out["comment_html"] = markdown_to_html(out["comment_markdown"]) if out["comment_markdown"] else None
     out["fix_diff"] = read("fix.diff")

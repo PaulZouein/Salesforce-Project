@@ -33,7 +33,7 @@ nav a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9p
 nav a:hover{background:var(--soft)}
 nav a.on{background:var(--accent-soft);color:var(--accent)}
 nav a .n{margin-left:auto;font-size:12px;color:var(--muted);background:var(--soft);border-radius:999px;padding:0 8px}
-.side-foot{margin-top:auto;display:grid;gap:8px;padding:8px}
+.side-foot{display:grid;gap:8px;padding:8px}
 .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12.5px;background:var(--panel);white-space:nowrap}
 .chip.ok{color:var(--accent);border-color:transparent;background:var(--accent-soft)}
 .chip.warn{color:var(--warn);border-color:transparent;background:var(--warn-soft)}
@@ -137,7 +137,32 @@ textarea.short{min-height:92px;font:inherit}
 select.inline{width:auto;padding:5px 9px;font-size:13px}
 .files{display:flex;gap:6px;flex-wrap:wrap}
 .hit{border-top:1px solid var(--line);padding:9px 0}.hit:first-child{border-top:0}
+.meter:empty{display:none}
+.meter{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.4;background:var(--panel);display:grid;gap:7px;margin:auto 0 4px}
+.meter .m-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.meter .m-row{display:grid;grid-template-columns:42px minmax(0,1fr);gap:6px;align-items:baseline}
+.meter .m-k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.meter .m-big{font-size:15px;font-weight:650}
+.meter .m-plan{display:grid;gap:6px}
+.meter .m-win-head{display:flex;justify-content:space-between;gap:6px}
+.meter .m-bar{height:4px;border-radius:2px;background:var(--soft);overflow:hidden;margin-top:2px}
+.meter .m-bar i{display:block;height:100%;background:var(--accent)}
+.meter .m-bar i.warn{background:var(--warn)}.meter .m-bar i.bad{background:var(--bad)}
+.meter .m-sub{color:var(--muted);font-size:11.5px}
+.meter .warn{color:var(--warn);font-weight:650}.meter .bad{color:var(--bad);font-weight:700}
+.meter details{border:0;padding:0}.meter summary{font-weight:500;color:var(--muted);font-size:11.5px}
+.meter .m-toggle{display:none;border:0;background:transparent;cursor:pointer;color:var(--muted);font-size:16px;padding:0 2px}
+.meter .m-pill{display:none}
+.saving{display:grid;gap:6px;margin:2px 0 14px}
+label.check{display:inline-flex;gap:8px;align-items:center;margin:0;cursor:pointer}
+label.inline{display:inline-flex;gap:6px;align-items:center;margin:0;font-weight:500}
+input[type=number]{width:96px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:5px 8px}
 @media (max-width:860px){
+  .meter{position:fixed;right:12px;bottom:12px;z-index:40;width:min(300px,calc(100vw - 24px));margin:0;box-shadow:0 6px 24px rgba(0,0,0,.18)}
+  .meter .m-toggle{display:inline-flex}
+  .meter.compact{width:auto;padding:0;border-radius:999px;gap:0}
+  .meter.compact > :not(.m-pill){display:none}
+  .meter.compact .m-pill{display:inline-flex;gap:8px;align-items:center;border:0;background:transparent;padding:7px 14px;font:inherit;font-weight:600;color:var(--ink);cursor:pointer}
   .app{grid-template-columns:minmax(0,1fr)}
   aside{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}
   .brand{padding:0 6px 0 0}.brand small{display:none}
@@ -158,6 +183,7 @@ select.inline{width:auto;padding:5px 9px;font-size:13px}
       <a href="#/memory" data-view="memory">Org memory</a>
       <a href="#/safety" data-view="safety">How it stays safe</a>
     </nav>
+    <div class="meter compact" id="meter" aria-live="polite"></div>
     <div class="side-foot" id="side-foot"></div>
   </aside>
   <main id="main"><p class="muted">Loading…</p></main>
@@ -237,6 +263,79 @@ function modelSelect(id, chosen) {
   return `<select id="${id}" class="inline" title="Which Claude model investigates">${Object.entries(models).map(([value, label]) =>
     `<option value="${esc(value)}" ${value === (chosen || "") ? "selected" : ""}>${esc(value === "" && fallback ? "Default (" + fallback + ")" : label)}</option>`).join("")}</select>`;
 }
+function money(value) {
+  if (value === null || value === undefined || isNaN(value)) return "–";
+  return "$" + (value >= 100 ? value.toFixed(0) : value.toFixed(2));
+}
+function kTokens(count) {
+  count = count || 0;
+  return count >= 1e6 ? (count / 1e6).toFixed(1) + "M" : count >= 1e3 ? Math.round(count / 1e3) + "k" : String(count);
+}
+function runPrefs() {
+  try { return JSON.parse(localStorage.getItem("sfti-run-prefs") || "{}") || {}; } catch (error) { return {}; }
+}
+function keepRunPrefs(prefs) {
+  try { localStorage.setItem("sfti-run-prefs", JSON.stringify(prefs)); } catch (error) { /* a convenience only */ }
+}
+function savingControls(economy, budget) {
+  return `<div class="saving">
+    <label class="check"><input type="checkbox" id="economy" ${economy ? "checked" : ""}> <b>Use fewer tokens</b></label>
+    <span class="small muted" style="margin-left:24px">Sonnet unless you chose a model, less deliberation, no helper agents, a shorter write-up. The evidence rules stay the same.</span>
+    <label class="inline small" for="budget">Stop if it costs more than $<input type="number" id="budget" min="0.05" max="100" step="0.05" placeholder="no limit" value="${budget ? esc(budget) : ""}"></label>
+  </div>`;
+}
+function savingChoice() {
+  const economy = $("#economy"), budget = $("#budget");
+  return { economy: !!(economy && economy.checked), budget_usd: budget && budget.value.trim() ? budget.value.trim() : null };
+}
+
+/* ---------- Usage box ---------- */
+const meter = { data: null, timer: null, open: false };
+function planWindows(plan) {
+  if (!plan || !plan.windows) return "";
+  const names = { five_hour: "5-hour", seven_day: "Week", seven_day_opus: "Week, Opus", seven_day_sonnet: "Week, Sonnet" };
+  const now = Date.now() / 1000;
+  const parts = Object.entries(plan.windows).map(([name, w]) => {
+    const label = names[name] || name.replace(/_/g, " ");
+    if (w.resetsAt && w.resetsAt < now) return `<div class="m-sub">${esc(label)}: reset since</div>`;
+    const pct = Math.max(0, Math.min(100, Math.round((w.utilization || 0) * 100)));
+    const tone = pct >= 95 ? "bad" : pct >= 80 ? "warn" : "";
+    const resets = w.resetsAt ? new Date(w.resetsAt * 1000) : null;
+    const at = resets ? (resets - Date.now() < 864e5 ? resets.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                                                 : resets.toLocaleDateString([], { weekday: "short", day: "numeric" })) : "";
+    return `<div title="${esc(label)} limit: ${pct}% used${at ? ", resets " + esc(at) : ""}">
+      <div class="m-win-head"><span>${esc(label)}</span><span class="${tone}">${pct}%</span></div>
+      <div class="m-bar"><i class="${tone}" style="width:${pct}%"></i></div>
+      ${name === "five_hour" && at ? `<div class="m-sub">resets ${esc(at)}</div>` : ""}</div>`;
+  });
+  return `<div class="m-row"><span class="m-k">Plan</span><div class="m-plan">${parts.join("")}</div></div>`;
+}
+function paintMeter() {
+  const box = $("#meter"), d = meter.data;
+  if (!box || !d) return;
+  const run = d.running[0];
+  const live = run ? run.usage : null;
+  const pill = run ? `<span class="spinner"></span>≈ ${money(live.cost_usd)}` : (d.today.runs ? `${money(d.today.cost_usd)} today` : "Usage");
+  const now = run ? `<div class="m-row"><span class="m-k">Now</span><span><a href="#/ticket/${encodeURIComponent(run.key)}">${esc(run.key)}</a>${run.options && run.options.economy ? ` <span class="chip ok" style="padding:0 7px">saving</span>` : ""}
+      <div class="m-big">${live.basis === "reported" ? "" : "≈ "}${money(live.cost_usd)}</div>
+      <div class="m-sub">${kTokens(live.tokens.total)} tokens${run.options && run.options.budget_usd ? ` · limit ${money(run.options.budget_usd)}` : ""}</div></span></div>` : "";
+  const last = !run && d.last ? `<div class="m-row"><span class="m-k">Last</span><span><a href="#/ticket/${encodeURIComponent(d.last.key)}">${esc(d.last.key)}</a> <span class="m-big">${d.last.basis === "reported" ? "" : "≈ "}${money(d.last.cost_usd)}</span>
+      <div class="m-sub">${kTokens((d.last.tokens || {}).total)} tokens${d.last.economy ? " · saving" : ""}${d.last.status && d.last.status !== "finished" ? " · " + esc(d.last.status) : ""}</div></span></div>` : "";
+  const today = `<div class="m-row"><span class="m-k">Today</span><span>${d.today.runs ? `${money(d.today.cost_usd)} · ${d.today.runs} run${d.today.runs === 1 ? "" : "s"}` : `<span class="m-sub">nothing yet</span>`}</span></div>`;
+  box.classList.toggle("compact", !meter.open);
+  box.innerHTML = `<button class="m-pill" id="meter-open" title="Show what investigations use">${pill}</button>
+    <div class="m-head"><b>Claude usage</b><button class="m-toggle" id="meter-close" title="Hide">×</button></div>
+    ${now}${last}${today}${planWindows(d.plan)}
+    <details><summary>About these figures</summary><div class="m-sub" style="margin-top:4px">${esc(d.note)}${d.plan && d.plan.seen_at ? ` Plan figures as of ${esc(when(d.plan.seen_at))}.` : ""}</div></details>`;
+  $("#meter-open").onclick = () => { meter.open = true; paintMeter(); };
+  $("#meter-close").onclick = () => { meter.open = false; paintMeter(); };
+}
+async function refreshMeter() {
+  clearTimeout(meter.timer);
+  try { meter.data = await api("/api/usage"); paintMeter(); } catch (error) { /* the page shows its own errors */ }
+  meter.timer = setTimeout(refreshMeter, meter.data && meter.data.running.length ? 1500 : 12000);
+}
+
 function readFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -440,18 +539,21 @@ async function viewNew() {
         <div class="field">
           <div class="spread"><label for="text">The ticket</label>
             <span class="row">
+              <label class="btn sm" for="pdf" style="margin:0" title="A PDF exported or printed from Jira, comments included">Upload a PDF</label><input type="file" id="pdf" accept="application/pdf,.pdf" hidden>
               ${STATUS.demo ? `<button class="btn sm" id="load-sample">Load the sample ticket</button>` : ""}
               ${STATUS.jira && STATUS.jira.enabled ? `<button class="btn sm" id="load-jira">Fetch from Jira</button>` : ""}
             </span></div>
-          <textarea id="text" spellcheck="false" placeholder="Key: ABC-123&#10;Title: …&#10;&#10;Description&#10;…&#10;&#10;Comments&#10;[date] who: …"></textarea>
+          <textarea id="text" spellcheck="false" placeholder="Paste the ticket here, or upload it as a PDF (exported or printed from Jira, comments included).&#10;&#10;Key: ABC-123&#10;Title: …&#10;&#10;Description&#10;…&#10;&#10;Comments&#10;[date] who: …"></textarea>
+          <div id="pdf-note"></div>
         </div>
         <div class="row" style="align-items:flex-start">
           <div class="field" style="flex:1;min-width:150px"><label for="key">Ticket key</label><input type="text" id="key" placeholder="found in the text" autocomplete="off"></div>
           <div class="field" style="flex:1;min-width:170px"><label for="org">Org where it happens</label><select id="org">${options}</select><div class="small" id="org-kind" style="margin-top:6px"></div></div>
           <div class="field" style="flex:1;min-width:170px"><label for="sandbox">Sandbox for tests <span class="muted">(optional)</span></label><select id="sandbox"><option value="">None</option>${options}</select></div>
         </div>
-        <div class="row" style="margin-bottom:14px"><label for="model" style="margin:0">Model</label>${modelSelect("model", "")}
+        <div class="row" style="margin-bottom:10px"><label for="model" style="margin:0">Model</label>${modelSelect("model", runPrefs().model || "")}
           <span class="small muted">Sonnet is quicker and uses less of your Claude usage; the default is the most thorough.</span></div>
+        ${savingControls(runPrefs().economy, runPrefs().budget_usd)}
         <div id="new-error"></div>
         <div class="row"><button class="btn primary" id="submit" ${orgs.length ? "" : "disabled"}>Save and continue</button>
           <span class="small muted">Nothing runs until you choose how on the next page.</span></div>
@@ -491,6 +593,24 @@ async function viewNew() {
   };
   const sampleBtn = $("#load-sample"); if (sampleBtn) sampleBtn.onclick = loadSample;
   if (location.hash.includes("?sample") && STATUS.demo) loadSample();
+  let pdfData = null;
+  $("#pdf").onchange = async () => {
+    const chosen = $("#pdf").files[0]; if (!chosen) return;
+    $("#new-error").innerHTML = ""; $("#pdf-note").innerHTML = `<p class="small muted"><span class="spinner"></span> Reading ${esc(chosen.name)}…</p>`;
+    try {
+      const content = await readFile(chosen);
+      const got = await api("/api/ticket-pdf", { method: "POST", body: { name: chosen.name, content_base64: content } });
+      pdfData = content;
+      text.value = got.readable ? got.text : "";
+      if (got.key && !keyTouched) key.value = got.key;
+      $("#pdf-note").innerHTML = `<div class="banner ${got.readable ? "info" : "warn"}" style="margin:8px 0 0"><b>${esc(chosen.name)}</b>: ${got.readable
+        ? `${got.pages} page${got.pages === 1 ? "" : "s"} read. Check the text above. The PDF itself is saved with the ticket, and the investigator opens it too for what the text misses (tables, screenshots).`
+        : `no text could be read from it (it may be a scan). Type the ticket key; the investigator will read the PDF itself.`}
+        <a href="#" id="pdf-remove">Remove</a></div>`;
+      $("#pdf-remove").onclick = event => { event.preventDefault(); pdfData = null; $("#pdf-note").innerHTML = ""; };
+    } catch (error) { pdfData = null; $("#pdf-note").innerHTML = errorBox(error); }
+    $("#pdf").value = "";
+  };
   const jiraBtn = $("#load-jira");
   if (jiraBtn) jiraBtn.onclick = async () => {
     const wanted = (key.value || prompt("Jira key, for example ABC-123") || "").trim(); if (!wanted) return;
@@ -500,7 +620,10 @@ async function viewNew() {
   $("#submit").onclick = async () => {
     $("#new-error").innerHTML = "";
     try {
-      const made = await api("/api/tickets", { method: "POST", body: { text: text.value, key: key.value, org: org.value, sandbox: sandbox.value, model: $("#model").value } });
+      const saving = savingChoice();
+      const made = await api("/api/tickets", { method: "POST", body: { text: text.value, key: key.value, org: org.value, sandbox: sandbox.value,
+        model: $("#model").value, economy: saving.economy, budget_usd: saving.budget_usd, pdf_base64: pdfData || undefined } });
+      keepRunPrefs({ model: $("#model").value, economy: saving.economy, budget_usd: saving.budget_usd });
       location.hash = "#/ticket/" + encodeURIComponent(made.ticket.key);
     } catch (error) {
       $("#new-error").innerHTML = errorBox(error) + (/already exists/.test(error.message) && key.value
@@ -534,9 +657,22 @@ function feedItem(e) {
   const marks = { tool: ["mark-ok", "›"], info: ["mark-wait", "•"], note: ["mark-wait", "“"], warn: ["mark-warn", "!"],
                   error: ["mark-bad", "✕"], done: ["mark-ok", "✓"] };
   const [tone, mark] = marks[e.kind] || ["mark-wait", "•"];
-  const extra = e.kind === "done" && (e.duration_seconds || e.turns)
-    ? ` <span class="muted small">(${[e.duration_seconds ? Math.round(e.duration_seconds / 60) + " min" : "", e.turns ? e.turns + " steps" : ""].filter(Boolean).join(", ")})</span>` : "";
+  const figures = [e.duration_seconds ? Math.max(1, Math.round(e.duration_seconds / 60)) + " min" : "", e.turns ? e.turns + " steps" : "",
+                   typeof e.cost_usd === "number" ? money(e.cost_usd) : ""].filter(Boolean);
+  const extra = figures.length && (e.kind === "done" || e.kind === "warn" || e.kind === "error") ? ` <span class="muted small">(${figures.join(", ")})</span>` : "";
   return `<li><span class="${tone}">${mark}</span><div><span class="${e.kind === "note" ? "note" : ""}">${esc(e.label)}</span>${extra}${e.detail ? `<div class="d">${esc(e.detail)}</div>` : ""}</div></li>`;
+}
+function costChip(t) {
+  const u = t.run && t.run.usage;
+  const total = t.usage_total || { runs: 0 };
+  const parts = [];
+  if (u && (u.tokens.total || u.cost_usd)) {
+    parts.push(t.run.status === "running"
+      ? `<span class="chip info" title="${esc(kTokens(u.tokens.total))} tokens so far">≈ ${money(u.cost_usd)} so far</span>`
+      : `<span class="chip" title="${esc(kTokens(u.tokens.total))} tokens">Last run ${u.basis === "reported" ? "" : "≈ "}${money(u.cost_usd)}</span>`);
+  }
+  if (total.runs > 1) parts.push(`<span class="chip" title="Every run of this ticket from this page">${money(total.cost_usd)} in ${total.runs} runs</span>`);
+  return parts.join(" ");
 }
 function renderDiff(text) {
   return `<pre class="diff">${text.split("\n").map(line => {
@@ -561,6 +697,7 @@ async function viewTicket(key) {
     if (!full && lastStage === t.stage && running) {
       const feed = $("#feed"); if (feed) { feed.innerHTML = events.map(feedItem).join(""); feed.scrollTop = feed.scrollHeight; }
       const steps = $("#steps"); if (steps) steps.innerHTML = stepsHtml(t);
+      const cost = $("#run-cost"); if (cost) cost.innerHTML = costChip(t);
       return t;
     }
     lastStage = t.stage;
@@ -577,7 +714,8 @@ async function viewTicket(key) {
       <h1>${esc(t.key)}${t.title ? " · " + esc(t.title) : ""}</h1>
       <p class="row" style="margin:0 0 20px">${stageChip(t.stage)} ${causeChip(t.root_cause_status)}
         ${t.evidence_check ? (t.evidence_check.ok ? `<span class="chip ok">✓ Evidence check passed · ${t.evidence_check.citations.valid} citations</span>` : `<span class="chip bad">Evidence check: ${t.evidence_check.problems.length} problem(s)</span>`) : ""}
-        <span class="chip">Org: ${esc(t.org || "?")}</span>${t.sandbox ? `<span class="chip">Tests on: ${esc(t.sandbox)}</span>` : ""}</p>
+        <span class="chip">Org: ${esc(t.org || "?")}</span>${t.sandbox ? `<span class="chip">Tests on: ${esc(t.sandbox)}</span>` : ""}
+        <span id="run-cost">${costChip(t)}</span></p>
       <div id="ticket-error"></div>
 
       ${sampleRun && hasResult ? `<div class="banner info"><b>Recorded sample.</b> The evidence below was gathered just now from the simulated org by the real tools. The written analysis is the stored sample, not a fresh AI investigation. The simulated org does not execute Apex.</div>` : ""}
@@ -605,6 +743,7 @@ async function viewTicket(key) {
               ${STATUS.claude.available ? modelSelect("model", t.model) : ""}
               ${isSample ? `<button class="btn" id="run-sample">Replay the recorded sample</button>` : ""}
             </div>
+            ${STATUS.claude.available ? savingControls(t.economy, t.budget_usd) : ""}
             ${STATUS.claude.available ? `<p class="small muted">Starts Claude Code in this project folder with only the investigator's read-only tools: it reads from the org and writes into this ticket's folder. The tools that change an org are not given to it.</p>`
               : `<p class="small muted">Claude Code was not found, so this page cannot start it for you.</p>`}
             ${isSample ? `<p class="small muted"><b>Replay</b> shows a complete result in seconds without the AI: the real tools gather the evidence from the simulated org and the stored analysis is displayed.</p>` : ""}
@@ -632,6 +771,7 @@ async function viewTicket(key) {
         <div class="row" style="margin:10px 0"><label class="btn sm" for="file" style="margin:0">Attach a file</label><input type="file" id="file" hidden>
           <span class="files" id="files">${(t.attachments || []).map(name => `<span class="chip">${esc(name)}</span>`).join("")}</span></div>
         <div id="info-error"></div>
+        ${hasResult && STATUS.claude.available ? savingControls(t.economy, t.budget_usd) : ""}
         ${hasResult ? `<div class="row"><button class="btn primary sm" id="rerun" ${STATUS.claude.available ? "" : "disabled"}>Investigate again with Claude Code</button>
           ${STATUS.claude.available ? modelSelect("model", t.model) : ""}
           ${isSample ? `<button class="btn sm" id="rerun-sample">Replay the sample again</button>` : ""}
@@ -655,7 +795,7 @@ async function viewTicket(key) {
       else if (tab === "evidence") box.innerHTML = `<p class="small muted">Files saved in <code>tickets/${esc(t.key)}/</code>. Query results are stored with personal data redacted.</p>
         <div class="tablewrap"><table><thead><tr><th>Kind</th><th>File</th><th>What it holds</th></tr></thead><tbody>${t.evidence.map(a => `
           <tr><td>${esc(String(a.kind).replace(/_/g, " "))}</td><td><code>${esc(a.path)}</code></td><td>${esc(a.description)}</td></tr>`).join("")}</tbody></table></div>`;
-      else if (tab === "ticket") box.innerHTML = (t.ticket_html ? `<div class="prose">${t.ticket_html}</div>` : `<p class="muted small">Not structured yet. This is the text as pasted:</p>`) +
+      else if (tab === "ticket") box.innerHTML = (t.has_pdf ? `<p><a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/ticket.pdf" target="_blank" rel="noopener">Open the ticket's PDF</a></p>` : "") + (t.ticket_html ? `<div class="prose">${t.ticket_html}</div>` : `<p class="muted small">Not structured yet. This is the text as pasted:</p>`) +
         (t.original_text ? `<details ${t.ticket_html ? "" : "open"}><summary>Original text as pasted</summary><pre class="plain" style="margin-top:8px">${esc(t.original_text)}</pre></details>` : "");
       else if (tab === "activity") box.innerHTML = `<ul class="feed">${events.map(feedItem).join("")}</ul>`;
     };
@@ -672,8 +812,9 @@ async function viewTicket(key) {
         const note = $("#note"), model = $("#model");
         if (note && note.value.trim()) body.note = note.value;
         if (model) body.model = model.value;
+        if ($("#economy")) Object.assign(body, savingChoice());
       }
-      try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body }); lastStage = null; await paint(true); poll(); }
+      try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body }); lastStage = null; await paint(true); poll(); refreshMeter(); }
       catch (error) { $("#ticket-error").innerHTML = errorBox(error); window.scrollTo(0, 0); }
     };
     const file = $("#file");
@@ -867,6 +1008,7 @@ async function viewSafety() {
 }
 
 refreshStatus().then(route).catch(error => { main.innerHTML = errorBox(error); });
+refreshMeter();
 </script>
 </body>
 </html>

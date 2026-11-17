@@ -5,6 +5,8 @@ tickets/*
 audit/
 # Org memory: what was learned about each org. Describes customer orgs: never committed.
 knowledge/
+# What investigations used (tokens, estimated cost, plan limits). Local only.
+usage/
 # Python
 __pycache__/
 *.py[cod]

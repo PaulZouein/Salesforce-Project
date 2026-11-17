@@ -199,10 +199,10 @@ def test_server_listens_on_loopback_only(web, project):
 def test_bad_requests(web):
     assert web.get("/api/nothing")[0] == 404
     assert web.post("/api/nothing")[0] == 404
-    status, _, _ = web.request("POST", "/api/tickets", headers={"Content-Type": "application/json",
-                                                               "X-SFTI-Token": web.app.token,
-                                                               "Content-Length": "5000000"})
-    assert status == 413
+    headers = {"Content-Type": "application/json", "X-SFTI-Token": web.app.token}
+    # Larger than any request may be: refused before it is read. A ticket may carry its PDF, other requests may not.
+    assert web.request("POST", "/api/tickets", headers={**headers, "Content-Length": "50000000"})[0] == 413
+    assert web.request("POST", "/api/demo", headers={**headers, "Content-Length": "5000000"})[0] == 413
     for key in ("..%2F..%2Fetc", "a%2Fb", "%2E%2E"):
         assert web.get(f"/api/tickets/{key}")[0] in (400, 404)
     assert web.get("/api/tickets/NOPE-1")[0] == 400
@@ -381,10 +381,17 @@ if mode == "no-mcp":
 out({"type": "system", "subtype": "init", "mcp_servers": [{"name": "sf-investigator", "status": "connected"}],
      "model": os.environ.get("FAKE_CLAUDE_MODEL"),
      "tools": ["Read", "mcp__sf-investigator__soql_query", "mcp__sf-investigator__org_info"]})
+out({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "overageDisabledReason": "org_level_disabled",
+     "unifiedWindows": {"five_hour": {"utilization": 0.42, "resetsAt": 1999999999, "status": "allowed"}}}})
 print("this line is not JSON and must be ignored")
-out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading the ticket."},
+def usage(given, written, read, made):
+    return {"input_tokens": given, "cache_creation_input_tokens": written, "cache_read_input_tokens": read,
+            "output_tokens": made, "cache_creation": {"ephemeral_1h_input_tokens": written}}
+out({"type": "assistant", "message": {"id": "msg_1", "model": "claude-sonnet-5-5", "usage": usage(5, 1000, 20000, 50),
+     "content": [{"type": "text", "text": "Reading the ticket."},
      {"type": "tool_use", "name": "mcp__sf-investigator__org_info", "input": {"org": "demo-prod"}}]}})
-out({"type": "assistant", "message": {"content": [
+out({"type": "assistant", "message": {"id": "msg_2", "model": "claude-sonnet-5-5", "usage": usage(5, 500, 21000, 80),
+     "content": [
      {"type": "tool_use", "name": "mcp__sf-investigator__soql_query", "input": {"org": "demo-prod", "query": "SELECT Id FROM Case"}},
      {"type": "tool_use", "name": "Write", "input": {"file_path": "tickets/DEMO-101/report.md"}}]}})
 out({"type": "user", "message": {"content": [{"type": "tool_result", "is_error": True,
@@ -393,6 +400,12 @@ if mode == "hang":
     time.sleep(120)
 if mode == "crash":
     sys.stderr.write("boom: something broke\n"); sys.exit(3)
+if mode == "budget":
+    out({"type": "result", "subtype": "error_max_budget_usd", "is_error": True, "num_turns": 5,
+         "duration_ms": 61000, "total_cost_usd": 0.5,
+         "modelUsage": {"claude-sonnet-5-5": {"inputTokens": 10, "outputTokens": 130, "cacheReadInputTokens": 41000,
+                                              "cacheCreationInputTokens": 1500, "costUSD": 0.5}}})
+    sys.exit(1)
 if mode == "flood":
     for i in range(int(os.environ["FAKE_CLAUDE_FLOOD"])):
         out({"type": "assistant", "message": {"content": [{"type": "text", "text": "note %d" % i}]}})
@@ -400,7 +413,9 @@ if mode != "no-report":
     with open(os.path.join("tickets", "DEMO-101", "report.md"), "w", encoding="utf-8") as handle:
         handle.write("# Investigation report: DEMO-101\n\n## Root cause\n\n**Not confirmed.** Stand-in report.\n")
 out({"type": "result", "subtype": "success", "is_error": False, "result": "Root cause confirmed.", "num_turns": 12,
-     "duration_ms": 183000, "total_cost_usd": 1.23})
+     "duration_ms": 183000, "total_cost_usd": 1.23,
+     "modelUsage": {"claude-sonnet-5-5": {"inputTokens": 10, "outputTokens": 130, "cacheReadInputTokens": 41000,
+                                          "cacheCreationInputTokens": 1500, "costUSD": 1.23}}})
 '''
 
 
@@ -798,6 +813,209 @@ def test_progress_lines_show_paths_inside_the_project_without_the_long_prefix(tm
     assert query["detail"] == "SELECT Id FROM Case"
     note = agent.tidy_event({"kind": "note", "label": f"I read {root}/x"}, root)
     assert note == {"kind": "note", "label": f"I read {root}/x"}
+
+
+# --- what a run costs ------------------------------------------------------------------------
+
+
+def test_a_run_is_metered_while_it_goes_and_kept_when_it_ends(web, fake_claude, monkeypatch, project):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "hang")
+    submit(web)
+    assert web.get("/api/usage")[1]["running"] == [] and web.get("/api/usage")[1]["last"] is None
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        live = web.get("/api/usage")[1]
+        if live["running"] and live["running"][0]["usage"]["responses"] == 2:
+            break
+        time.sleep(0.1)
+    now = live["running"][0]
+    assert now["key"] == "DEMO-101" and now["options"] == {"model": None, "economy": False, "budget_usd": None}
+    # Two responses of the stand-in, at Sonnet 5.5 list prices: an estimate while it runs.
+    assert now["usage"]["basis"] == "estimate" and now["usage"]["cost_usd"] == 0.0114
+    assert now["usage"]["tokens"]["total"] == 10 + 130 + 41000 + 1500
+    assert live["plan"]["windows"]["five_hour"] == {"utilization": 0.42, "resetsAt": 1999999999, "status": "allowed"}
+    assert "overageDisabledReason" not in json.dumps(live["plan"])
+    assert web.get("/api/tickets/DEMO-101")[1]["run"]["usage"]["cost_usd"] == 0.0114
+    web.post("/api/tickets/DEMO-101/cancel")
+    web.wait_until_finished("DEMO-101")
+    after = web.get("/api/usage")[1]
+    assert after["running"] == [] and after["last"]["key"] == "DEMO-101" and after["last"]["status"] == "cancelled"
+    assert after["today"]["runs"] == 1 and after["today"]["cost_usd"] == 0.0114 and "list prices" in after["note"]
+
+
+def test_a_finished_run_reports_claude_codes_own_total(web, fake_claude, project):
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    detail = web.wait_until_finished("DEMO-101")
+    assert detail["run"]["usage"]["basis"] == "reported" and detail["run"]["usage"]["cost_usd"] == 1.23
+    assert detail["run"]["usage"]["tokens"]["total"] == 10 + 130 + 41000 + 1500
+    events = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"]
+    assert events[-1]["kind"] == "done" and events[-1]["cost_usd"] == 1.23
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    detail = web.wait_until_finished("DEMO-101")
+    assert detail["usage_total"] == {"runs": 2, "cost_usd": 2.46, "tokens": 2 * (10 + 130 + 41000 + 1500)}
+    ledger = (project.root / "usage" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(ledger) == 2
+    entry = json.loads(ledger[0])
+    assert set(entry) == {"key", "runner", "status", "started_at", "finished_at", "economy", "tokens", "cost_usd",
+                          "basis", "models"}
+    assert entry["key"] == "DEMO-101" and entry["status"] == "finished" and entry["models"] == ["claude-sonnet-5-5"]
+    assert json.loads((project.root / "usage" / "plan.json").read_text(encoding="utf-8"))["windows"]
+
+
+def test_the_recorded_sample_and_a_missing_claude_code_cost_nothing(web, monkeypatch, project):
+    submit(web)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "sample"})
+    web.wait_until_finished("DEMO-101")
+    monkeypatch.setenv("SFTI_CLAUDE_EXECUTABLE", "")
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    web.wait_until_finished("DEMO-101")
+    usage_now = web.get("/api/usage")[1]
+    assert usage_now["last"] is None and usage_now["today"]["runs"] == 0
+    assert not (project.root / "usage" / "ledger.jsonl").exists()
+
+
+# --- using fewer tokens -------------------------------------------------------------------------
+
+
+def test_use_fewer_tokens_changes_what_claude_code_is_given(web, fake_claude, monkeypatch):
+    status, made = submit(web, economy=True, budget_usd="1.5")
+    assert status == 200 and made["ticket"]["economy"] is True and made["ticket"]["budget_usd"] == 1.5
+    assert "as few tokens as the rules allow" in made["prompt"] and "subagents are not available" in made["prompt"]
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    web.wait_until_finished("DEMO-101")
+    args = json.loads(fake_claude.read_text(encoding="utf-8"))["args"]
+    assert args[args.index("--effort") + 1] == "medium" and "--disable-slash-commands" in args
+    assert args[args.index("--max-budget-usd") + 1] == "1.50" and args[-2:] == ["--model", "sonnet"]
+    refused = args[args.index("--disallowedTools") + 1].split(",")
+    allowed = args[args.index("--allowedTools") + 1].split(",")
+    assert {"Task", "Agent"} <= set(refused) and not {"Task", "Agent"} & set(allowed)
+    assert "Read" in allowed and agent.TOOL_PREFIX + "soql_query" in allowed
+    # An explicitly chosen model stays; the other savings still apply. Turning it off restores the defaults.
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "model": "opus"})
+    web.wait_until_finished("DEMO-101")
+    args = json.loads(fake_claude.read_text(encoding="utf-8"))["args"]
+    assert args[-2:] == ["--model", "opus"] and "--effort" in args
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "model": "", "economy": False, "budget_usd": ""})
+    detail = web.wait_until_finished("DEMO-101")
+    args = json.loads(fake_claude.read_text(encoding="utf-8"))["args"]
+    assert not {"--effort", "--disable-slash-commands", "--max-budget-usd", "--model"} & set(args)
+    assert detail["economy"] is False and detail["budget_usd"] is None
+    assert "as few tokens" not in detail["prompt"]
+
+
+@pytest.mark.parametrize("budget", ["abc", "0", "0.01", "1000", "-1", "1e400"])
+def test_a_spending_limit_must_be_a_sensible_amount(web, fake_claude, budget):
+    status, data = submit(web, budget_usd=budget)
+    assert status == 400 and "spending limit" in data["error"]["message"]
+    assert web.get("/api/tickets")[1]["tickets"] == []
+    submit(web)
+    status, data = web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "budget_usd": budget, "note": "a note"})
+    assert status == 400 and "spending limit" in data["error"]["message"]
+    detail = web.get("/api/tickets/DEMO-101")[1]
+    assert detail["attachments"] == [] and detail["budget_usd"] is None and detail["run"] is None
+
+
+def test_a_run_stopped_at_the_spending_limit_says_so_and_keeps_its_work(web, fake_claude, monkeypatch, project):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "budget")
+    submit(web, budget_usd="$0.50")
+    web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    detail = web.wait_until_finished("DEMO-101")
+    assert detail["run"]["status"] == "incomplete" and detail["stage"] == "incomplete"
+    last = web.get("/api/tickets/DEMO-101/events?after=0")[1]["events"][-1]
+    assert last["kind"] == "warn" and last["label"] == "Stopped at your spending limit" and last["cost_usd"] == 0.5
+    assert "budget_stop" not in last
+    assert detail["run"]["usage"]["cost_usd"] == 0.5 and detail["run"]["options"]["budget_usd"] == 0.5
+    assert json.loads((project.root / "usage" / "ledger.jsonl").read_text(encoding="utf-8"))["status"] == "incomplete"
+
+
+# --- a ticket given as a PDF -----------------------------------------------------------------
+
+
+def make_pdf(lines: list[str] | None) -> bytes:
+    """A small valid PDF: one page with these lines of text, or with no text at all (like a scan)."""
+    content = b""
+    if lines:
+        ops = ["BT", "/F1 11 Tf", "14 TL", "56 780 Td"]
+        for line in lines:
+            escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            ops.append(f"({escaped}) Tj T*")
+        ops.append("ET")
+        content = "\n".join(ops).encode("latin-1")
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+               b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> "
+               b"/Contents 4 0 R >>",
+               b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+               b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return out
+
+
+JIRA_PDF_LINES = ["[ACME-77] Invoices are created twice after approval", "Type: Bug    Priority: High    Status: Open",
+                  "Description", "Since the release on 3 November some invoices are created twice when an approval",
+                  "is granted. Seen on invoices INV-1001 and INV-1004.", "Comments",
+                  "Finance lead: it only happens when two approvers approve within a minute."]
+
+
+def test_a_ticket_can_be_given_as_a_pdf(web, fake_claude, project):
+    pdf = make_pdf(JIRA_PDF_LINES)
+    status, read = web.post("/api/ticket-pdf", {"name": "ACME-77.pdf", "content_base64": base64.b64encode(pdf).decode()})
+    assert status == 200 and read["readable"] is True and read["pages"] == 1 and read["key"] == "ACME-77"
+    assert "two approvers approve within a minute" in read["text"]
+    status, made = web.post("/api/tickets", {"text": read["text"], "org": "demo-prod",
+                                             "pdf_base64": base64.b64encode(pdf).decode()})
+    assert status == 200 and made["ticket"]["key"] == "ACME-77" and made["ticket"]["pdf"] == "ticket-original.pdf"
+    assert made["ticket"]["title"] == "Invoices are created twice after approval"   # without the key Jira puts in front
+    folder = project.ticket("ACME-77")
+    assert (folder / "attachments" / "ticket-original.pdf").read_bytes() == pdf
+    original = (folder / "attachments" / "ticket-original.txt").read_text(encoding="utf-8")
+    assert original.startswith("[The ticket was given as a PDF") and "INV-1004" in original
+    assert "attachments/ticket-original.pdf" in made["prompt"] and "Open the PDF itself" in made["prompt"]
+    detail = web.get("/api/tickets/ACME-77")[1]
+    assert detail["has_pdf"] is True and detail["attachments"] == []
+    status, headers, raw = web.request("GET", "/tickets/ACME-77/ticket.pdf")
+    assert status == 200 and headers["Content-Type"] == "application/pdf" and raw == pdf
+    assert web.request("GET", "/tickets/NOPE-1/ticket.pdf")[0] == 404
+    # The PDF's name is the investigator's: an attachment cannot replace it.
+    status, data = web.post("/api/tickets/ACME-77/attachments", {"name": "ticket-original.pdf",
+                                                                 "content_base64": base64.b64encode(pdf).decode()})
+    assert status == 400 and "used by the investigator" in data["error"]["message"]
+
+
+def test_a_scanned_pdf_needs_only_the_key(web, project):
+    scan = base64.b64encode(make_pdf(None)).decode()
+    status, read = web.post("/api/ticket-pdf", {"name": "scan.pdf", "content_base64": scan})
+    assert status == 200 and read["readable"] is False and read["text"] == "" and read["key"] is None
+    status, data = web.post("/api/tickets", {"text": "", "org": "demo-prod", "pdf_base64": scan})
+    assert status == 400 and "No ticket key" in data["error"]["message"]
+    status, made = web.post("/api/tickets", {"text": "", "key": "scan-5", "org": "demo-prod", "pdf_base64": scan})
+    assert status == 200 and made["ticket"]["key"] == "SCAN-5"
+    original = (project.ticket("SCAN-5") / "attachments" / "ticket-original.txt").read_text(encoding="utf-8")
+    assert "No text could be read from the PDF: read the PDF itself." in original
+
+
+def test_files_that_are_not_readable_pdfs_are_refused(web, monkeypatch):
+    def send(data: bytes):
+        return web.post("/api/ticket-pdf", {"name": "x.pdf", "content_base64": base64.b64encode(data).decode()})
+
+    assert "not a PDF" in send(b"just some text, renamed to .pdf")[1]["error"]["message"]
+    assert "could not be read" in send(b"%PDF-1.4\n%garbage that is no PDF at all")[1]["error"]["message"]
+    assert "empty" in send(b"")[1]["error"]["message"]
+    status, data = web.post("/api/ticket-pdf", {"name": "x.pdf", "content_base64": "not base64 !!"})
+    assert status == 400 and "could not be read" in data["error"]["message"]
+    monkeypatch.setattr(tickets, "MAX_TICKET_PDF_BYTES", 100)
+    assert "too large" in send(make_pdf(JIRA_PDF_LINES))[1]["error"]["message"]
+    assert web.get("/api/tickets")[1]["tickets"] == []
 
 
 def test_tool_labels_cover_every_tool_of_the_server():
