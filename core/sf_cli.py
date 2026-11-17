@@ -98,6 +98,80 @@ def validate_target_org(target: str) -> str:
     return target
 
 
+# --- Connecting an org from an authorization URL ------------------------------------------
+
+#: A Salesforce DX authorization URL as ``sf org auth show-sfdx-auth-url`` prints it and as
+#: ``AuthInfo.parseSfdxAuthUrl`` in ``@salesforce/core`` (CLI 2.158.7) reads it:
+#: ``force://<client id>:<client secret, may be empty>:<refresh token>@<org host[:port]>``.
+#: The refresh token in it works like a password.
+_AUTH_URL_RE = re.compile(
+    r"force://([a-zA-Z0-9._-]+={0,2}):([a-zA-Z0-9._-]*={0,2}):([a-zA-Z0-9._-]+={0,2})@([a-zA-Z0-9._-]+)(?::(\d{1,5}))?/?"
+)
+MAX_AUTH_URL_LENGTH = 4096
+_NETWORK_FAILURE_RE = re.compile(
+    r"\b(403|407|tunnel\w*|ECONN\w*|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|getaddrinfo|socket hang up|certificate|"
+    r"network|proxy)\b",
+    re.IGNORECASE,
+)
+_REFUSED_TOKEN_RE = re.compile(r"invalid_grant|expired|revoked|refresh token|inactive", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class AuthUrl:
+    """A checked authorization URL. ``host`` is the org's address and is not secret; the rest is."""
+
+    value: str
+    host: str
+    secrets: tuple[str, ...]
+
+    def __repr__(self) -> str:  # never show the secret parts, not even in a traceback
+        return f"AuthUrl(host={self.host!r})"
+
+
+def read_auth_url(value: Any) -> AuthUrl:
+    """Check that ``value`` is a Salesforce DX authorization URL and return it, or raise.
+
+    Error messages never repeat the value.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise InputValidationError(
+            "Paste the authorization URL.",
+            hint="On a computer where the org is connected, run 'sf org auth show-sfdx-auth-url --target-org <alias>' "
+            "and copy the line that starts with force://.",
+        )
+    text = value.strip().strip('"').strip("'").strip()
+    if len(text) > MAX_AUTH_URL_LENGTH:
+        raise InputValidationError("This is too long to be an authorization URL.")
+    match = _AUTH_URL_RE.fullmatch(text)
+    if not match:
+        raise InputValidationError(
+            "This is not a Salesforce authorization URL.",
+            hint="It is one line that starts with force:// and ends with @ and the org's address, as printed by "
+            "'sf org auth show-sfdx-auth-url'. An access token or a password does not work here.",
+        )
+    _client_id, client_secret, refresh_token, host, _port = match.groups()
+    if "." not in host or host.startswith((".", "-")) or ".." in host:
+        raise InputValidationError("The org address at the end of the authorization URL is not valid.")
+    secrets = tuple(s for s in (refresh_token, client_secret) if len(s) >= 8)
+    return AuthUrl(value=text, host=host.lower(), secrets=(text, *secrets))
+
+
+def _without_secrets(text: str, auth: AuthUrl) -> str:
+    for secret in auth.secrets:
+        text = text.replace(secret, "[removed]")
+    return re.sub(r"force://\S+", "force://[removed]", text)
+
+
+def _connect_hint(message: str, host: str) -> str:
+    if _NETWORK_FAILURE_RE.search(message):
+        return (f"This computer could not reach {host}. If the investigator runs in a cloud session or behind a "
+                f"company proxy, its network settings must allow {host}.")
+    if _REFUSED_TOKEN_RE.search(message):
+        return ("Salesforce refused the authorization: it was revoked, or it expired. On the other computer, log in "
+                "again ('sf org login web') and show the authorization URL again.")
+    return "Check that the org is connected on the other computer ('sf org list'), then copy its authorization again."
+
+
 def command_tokens(args: Sequence[str]) -> tuple[str, ...]:
     """Leading non-flag tokens, e.g. ``("data", "query")``."""
     tokens: list[str] = []
@@ -214,8 +288,13 @@ def _kill_tree(proc: subprocess.Popen) -> None:
             pass
 
 
-def default_runner(argv: list[str], cwd: str | None, timeout: float, env: dict[str, str]) -> ProcessResult:
-    """Run ``argv`` without a shell and return its output. Raises ``TimeoutError`` on timeout."""
+def default_runner(
+    argv: list[str], cwd: str | None, timeout: float, env: dict[str, str], *, input_text: str | None = None
+) -> ProcessResult:
+    """Run ``argv`` without a shell and return its output. Raises ``TimeoutError`` on timeout.
+
+    ``input_text`` is written to the process's standard input; without it, standard input is empty.
+    """
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -225,7 +304,7 @@ def default_runner(argv: list[str], cwd: str | None, timeout: float, env: dict[s
         argv,
         cwd=cwd,
         env=env,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -235,7 +314,7 @@ def default_runner(argv: list[str], cwd: str | None, timeout: float, env: dict[s
         **kwargs,
     )
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        stdout, stderr = proc.communicate(input=input_text, timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
         try:
@@ -468,6 +547,63 @@ class SfCli:
         return self.run_envelope(
             args, permit=permit, timeout=timeout, cwd=cwd, accept_statuses=accept_statuses
         ).get("result")
+
+    # -- connecting an org -----------------------------------------------------------------
+
+    def connect_with_auth_url(self, alias: str, auth_url: str | AuthUrl, *, timeout: float = 180.0) -> dict[str, Any]:
+        """Save an org's authorization on this computer from a Salesforce DX authorization URL.
+
+        Runs ``sf org login sfdx-url --sfdx-url-stdin - --alias <alias> --json`` with the URL on
+        standard input, so it never appears in a process list, a log or an error message.
+
+        It changes nothing in any org: it is the one command here that is neither a read nor an
+        org write, which is why it has its own method and is not on the read allowlist
+        (``run`` still treats ``org login`` as a write). Claude Code is not given it: only the
+        local page calls it, when the user pastes an authorization there.
+        """
+        validate_target_org(alias)
+        auth = auth_url if isinstance(auth_url, AuthUrl) else read_auth_url(auth_url)
+        args = ["org", "login", "sfdx-url", "--sfdx-url-stdin", "-", "--alias", alias, "--json"]
+        self._check_arguments(args)
+        exe = self.executable()
+        label = "sf org login sfdx-url"
+        try:
+            proc = self._runner([exe, *args], None, timeout, self._environment(), input_text=auth.value + "\n")
+        except TimeoutError:
+            raise SfCliTimeoutError(
+                f"Connecting to {auth.host} did not finish within {timeout:.0f}s and was stopped.",
+                hint=_connect_hint("network", auth.host),
+            ) from None
+        except FileNotFoundError:
+            raise SfCliNotFoundError(
+                f"Could not start the Salesforce CLI at {exe!r}.",
+                hint="Check that 'sf --version' works in a terminal.",
+            ) from None
+        except OSError as exc:
+            raise SfCliError(f"Could not start '{label}': {exc}", command=label) from None
+
+        envelope = parse_json_output(proc.stdout)
+        if envelope is None:
+            raise SfCliOutputError(
+                f"'{label}' did not return JSON (exit code {proc.returncode}).",
+                details={"stdout": _without_secrets(_tail(proc.stdout), auth),
+                         "stderr": _without_secrets(_tail(proc.stderr), auth)},
+            )
+        envelope = scrub_secrets(envelope)
+        status = envelope.get("status", proc.returncode)
+        result = envelope.get("result")
+        if status == 0 and isinstance(result, dict) and result.get("orgId"):
+            return {"alias": alias, "org_id": str(result["orgId"]), "host": auth.host}
+        message = _without_secrets(
+            str(envelope.get("message") or f"'{label}' failed with status {status}.").strip(), auth
+        )
+        raise SfCliError(
+            message,
+            name=str(envelope.get("name") or envelope.get("code") or "Error"),
+            exit_code=status if isinstance(status, int) else proc.returncode,
+            command=label,
+            hint=_connect_hint(message, auth.host),
+        )
 
 
 def _hint_for(name: str, message: str) -> str | None:

@@ -2,9 +2,13 @@
 
 It listens on 127.0.0.1 only. Requests whose ``Host`` header is not a loopback name are refused
 (so a web page elsewhere cannot reach it by pointing a domain name at 127.0.0.1), and every
-request that changes something needs the token that is embedded in the served page.
+request that changes something needs the token that is embedded in the served page. The one
+exception is a name the user allows on purpose with ``--allow-host``, for a proxy they trust in
+front of the page (the preview of a cloud session); refused names are printed in the window.
 
-There is deliberately no route that changes a Salesforce org.
+There is deliberately no route that changes a Salesforce org. ``/api/orgs/connect`` saves an
+org's authorization on this computer, from an authorization URL the user pastes; it changes
+nothing in the org.
 """
 
 from __future__ import annotations
@@ -28,8 +32,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from core import prereqs
 from core.app import Investigator
 from core.config import project_root
-from core.errors import InputValidationError, SfInvestigatorError, WorkspaceError
-from core.sf_cli import SfCli
+from core.errors import InputValidationError, SfCliError, SfInvestigatorError, WorkspaceError
+from core.sf_cli import SfCli, read_auth_url, validate_target_org
 from core.workspace import validate_ticket_key
 
 from . import __version__, agent, tickets, usage
@@ -42,6 +46,26 @@ MAX_UPLOAD_BODY_BYTES = tickets.MAX_ATTACHMENT_BYTES * 4 // 3 + 4096
 MAX_TICKET_BODY_BYTES = tickets.MAX_TICKET_PDF_BYTES * 4 // 3 + tickets.MAX_TICKET_CHARS * 4 + 65536
 DEFAULT_PORT = 8765
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+_LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
+_HOST_NAME_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
+
+
+def check_allowed_host(name: Any) -> str:
+    """An exact host name for ``--allow-host``: no wildcard, no port, no scheme."""
+    value = str(name or "").strip().lower()
+    if not _HOST_NAME_RE.match(value) or value in _LOOPBACK_NAMES:
+        raise InputValidationError(
+            f"{str(name)[:80]!r} is not a host name this page can be allowed to answer for.",
+            hint="Give one exact name, such as preview.example.com: no *, no port, no http://.")
+    return value
+
+
+def _host_name(header: str | None) -> str:
+    """The host part of a ``Host`` header, lower case, without the port."""
+    value = (header or "").strip().lower()
+    if value.startswith("["):
+        return value.split("]")[0] + "]"
+    return value.rsplit(":", 1)[0]
 
 #: What to do when a prerequisite is missing, per operating system.
 FIXES: dict[str, dict[str, list[str]]] = {
@@ -107,9 +131,14 @@ class ViewCache:
 class App:
     """State shared by all requests: the project root, demo mode, the investigator and the runs."""
 
-    def __init__(self, root: Path | None = None, *, demo: bool = False, demo_state: Path | None = None):
+    def __init__(self, root: Path | None = None, *, demo: bool = False, demo_state: Path | None = None,
+                 allowed_hosts: Any = ()):
         self.root = Path(root).resolve() if root else project_root()
         self.token = secrets.token_urlsafe(24)
+        #: Names besides this computer's own that the page answers for: only a proxy the user trusts
+        #: in front of it (``--allow-host``), such as the preview of a cloud session. Empty by default.
+        self.allowed_hosts = frozenset(check_allowed_host(name) for name in allowed_hosts)
+        self._refused_names: set[str] = set()
         self._lock = threading.Lock()
         self._demo_state = Path(demo_state) if demo_state else None
         self._launcher: Path | None = None
@@ -229,6 +258,46 @@ class App:
                 pass
         return out
 
+    def answers_for(self, name: str) -> bool:
+        """Whether a request naming this host (``Host`` or ``Origin``) may be answered."""
+        return name in _LOOPBACK_NAMES or name in LOOPBACK_HOSTS or name in self.allowed_hosts
+
+    def note_refused(self, what: str, name: str) -> None:
+        """Say once, in the window, which name was refused, so a trusted proxy can be allowed on purpose."""
+        shown = re.sub(r"[^a-z0-9.\-\[\]:]", "?", name.lower())[:100] or "(none)"
+        with self._lock:
+            if shown in self._refused_names:
+                return
+            self._refused_names.add(shown)
+        print(f"Refused a request with {what} {shown}: this page only answers on this computer. If {shown} is a "
+              f"proxy you trust in front of it, start it with --allow-host {shown}", file=sys.stderr, flush=True)
+
+    def connect_org(self, alias: Any, auth_url: Any) -> dict[str, Any]:
+        """Save an org's authorization on this computer from the authorization URL the user pasted.
+
+        It changes nothing in any org. The URL works like a password: it goes to the Salesforce CLI
+        on standard input and is never written, logged or sent back.
+        """
+        if self.demo:
+            raise InputValidationError("The demo uses simulated orgs.",
+                                       hint="Press 'Use my own Salesforce orgs' first, then connect your org.")
+        if not isinstance(alias, str) or not alias.strip():
+            raise InputValidationError("Give the org a short name, for example my-dev.")
+        alias = validate_target_org(alias.strip())
+        auth = read_auth_url(auth_url)
+        print(f"Connecting the org '{alias}' at {auth.host}...", file=sys.stderr, flush=True)
+        try:
+            connected = self.investigator().cli.connect_with_auth_url(alias, auth)
+        except SfInvestigatorError as exc:
+            print(f"The org '{alias}' at {auth.host} was not connected: {exc.message}", file=sys.stderr, flush=True)
+            raise
+        except Exception:  # noqa: BLE001 - say nothing that could carry the pasted value
+            raise SfCliError("Connecting failed for an unexpected reason.", command="sf org login sfdx-url",
+                             hint="Try again; if it fails again, connect the org from a terminal instead.") from None
+        self.cache.clear()
+        print(f"Connected the org '{alias}' ({connected['org_id']}) at {auth.host}.", file=sys.stderr, flush=True)
+        return {"connected": connected}
+
     def sample_ticket(self) -> dict[str, Any]:
         from simulator import demo
         return {"key": demo.KEY, "text": demo.TICKET_TEXT.read_text(encoding="utf-8"), "org": demo.PROD,
@@ -331,9 +400,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self._json({"ok": False, "error": {"message": message, **extra}}, status)
 
         def _local_only(self) -> bool:
-            host = (self.headers.get("Host") or "").rsplit(":", 1)[0] if not (self.headers.get("Host") or "").startswith("[") \
-                else (self.headers.get("Host") or "").split("]")[0] + "]"
-            if host not in LOOPBACK_HOSTS:
+            host = _host_name(self.headers.get("Host"))
+            if not app.answers_for(host):
+                app.note_refused("host", host)
                 self._error(HTTPStatus.FORBIDDEN, "This interface only answers on this computer.")
                 return False
             return True
@@ -343,9 +412,15 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 self._error(HTTPStatus.FORBIDDEN, "Missing or wrong page token. Reload the page.")
                 return None
             origin = self.headers.get("Origin")
-            if origin and urlsplit(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
-                self._error(HTTPStatus.FORBIDDEN, "Requests from other sites are refused.")
-                return None
+            if origin:
+                try:
+                    origin_host = (urlsplit(origin).hostname or "").lower()
+                except ValueError:
+                    origin_host = ""
+                if not app.answers_for(origin_host):
+                    app.note_refused("origin", origin_host)
+                    self._error(HTTPStatus.FORBIDDEN, "Requests from other sites are refused.")
+                    return None
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -470,6 +545,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             inv = app.investigator
             if path == "/api/demo":
                 return self._guarded(lambda: app.set_demo(bool(body.get("enabled")), reset=bool(body.get("reset"))))
+            if path == "/api/orgs/connect":
+                return self._guarded(lambda: app.connect_org(body.get("alias"), body.get("auth_url")))
             if path == "/api/ticket-pdf":
                 def read_pdf() -> dict[str, Any]:
                     found = tickets.read_pdf(_decode(body.get("content_base64")))

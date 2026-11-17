@@ -89,6 +89,8 @@ your computer.
 - **Cheaper runs**: tick **Use fewer tokens**, and set **Stop if it costs more than $…** if you
   want a hard limit. Or choose *Sonnet* next to the Investigate button.
 - **Have a Developer Edition org?** `docs/LIVE-ORG.md` tries everything on it, safely.
+- **No browser where the investigator runs** (a remote computer, a cloud session)? *Connect an
+  org* can take an authorization pasted from a computer that has one. See the README.
 - **Stop**: close the small window, or press Ctrl+C in it.
 - **Update**: unzip the new version over the old one and start again. Your `tickets` and
   `knowledge` folders are kept.

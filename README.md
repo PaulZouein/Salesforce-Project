@@ -206,10 +206,25 @@ investigator reads the PDF itself. Up to 10 MB; the first 80 pages are read as t
 
 - It answers only on this computer: it binds to `127.0.0.1`, refuses requests addressed to any
   other host name, and requires a token embedded in the page for anything that changes state.
-  There is no option to expose it on the network. Do not put it behind a public proxy.
+  There is no option to expose it on the network. Do not put it behind a public proxy. The one
+  exception is a name you allow on purpose, `--allow-host NAME` (one exact name, repeatable), for
+  a proxy you trust in front of it, such as the preview of a cloud session. Names it refused are
+  printed in its window, so you can see what to allow.
 - It has **no route that changes a Salesforce org**. It reads (orgs, tickets, memory), creates
-  and deletes ticket folders on your disk, and starts investigations. A test scans its code for
-  any reference to the write functions.
+  and deletes ticket folders on your disk, starts investigations, and can save an org's
+  authorization on the computer it runs on (below). A test scans its code for any reference to
+  the write functions.
+- **Connecting an org without a browser.** Where the page runs on a computer you cannot log in
+  from (a remote machine, a cloud session), *Get started → Connect an org → No browser on the
+  computer that runs the investigator?* takes an authorization instead. On a computer that has
+  the Salesforce CLI and a browser, run `sf org login web --alias my-dev`, then
+  `sf org auth show-sfdx-auth-url --target-org my-dev`, and paste the line that starts with
+  `force://` into the page. That line works like a password: paste it only there. The page
+  hands it to `sf org login sfdx-url` on standard input, so it never appears in a command line,
+  a log, an answer or an error; it stores nothing itself. The Salesforce CLI 2.158 has no
+  code-based (device) login any more, which is why this takes an authorization rather than a code.
+  To end it: `sf org logout --target-org my-dev` on the computer that runs the page, and revoke
+  the Salesforce CLI under your user's OAuth Connected Apps in Salesforce.
 - It posts nothing to your ticket system. The comment tab is a draft with a copy button.
 - **Download the result** contains the report (Markdown and printable HTML), the comment, the fix
   and the ticket summary. The saved evidence, the retrieved source and the pasted ticket stay in
@@ -381,6 +396,9 @@ sf org login web --alias my-prod
 
 Log in to production with a user that has only the access the investigation needs. The tool
 never writes to production, but a read-only or minimum-access user is still the right habit.
+
+No browser on the computer that runs the investigator? See *Connecting an org without a
+browser* under *What the page can and cannot do*.
 
 **5. Check.**
 
@@ -679,6 +697,7 @@ org connected:
 | `apex get log` | `--log-id`, `--output-dir`, `--target-org` | with `--output-dir` the JSON result is a list of file paths |
 | `apex run` | `--file`, `--target-org` | a compile or runtime failure throws, with the result in `data` |
 | `api request rest` | URL, `--method`, `--body @file`, `--target-org` | result `{statusCode, headers, body}`; exit code 1 when HTTP >= 400 |
+| `org login sfdx-url` | `--sfdx-url-stdin -`, `--alias`, `--json` | read from `@salesforce/plugin-auth` 6.0.5 and `@salesforce/core`: the value is read from standard input only; the URL's host is used for the token refresh and the user lookup, so only the org's own address must be reachable. `org login device` no longer exists in 2.158.7 |
 
 The error envelope (`name`, `message`, `exitCode`, `status`, `stack`) was captured live.
 

@@ -3,9 +3,14 @@
     python -m webapp              # your real Salesforce CLI and orgs
     python -m webapp --demo       # the simulated demo orgs, no Salesforce account needed
     python -m webapp --port 9000 --no-browser
+    python -m webapp --no-browser --allow-host preview.example.com   # behind a proxy you trust
 
 Without ``--port`` it uses 8765, or the next free port after it. If a copy is already running
 there, that copy is opened instead of starting a second one on the same tickets.
+
+The page only answers requests addressed to this computer. ``--allow-host`` adds one exact name,
+for a proxy you trust in front of it (the preview of a cloud session, for example). Names that
+were refused are printed in the window.
 """
 
 from __future__ import annotations
@@ -20,7 +25,9 @@ import urllib.request
 import webbrowser
 from typing import Any
 
-from .server import DEFAULT_PORT, App, create_server
+from core.errors import InputValidationError
+
+from .server import DEFAULT_PORT, App, check_allowed_host, create_server
 
 PORTS_TO_TRY = 10
 
@@ -97,9 +104,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--demo", action="store_true", help="use the simulated demo orgs")
     parser.add_argument("--no-browser", action="store_true", help="do not open the browser")
     parser.add_argument("--self-test", action="store_true", help="start, check that the page answers, and stop")
+    parser.add_argument("--allow-host", action="append", default=[], metavar="NAME",
+                        help="also answer requests addressed to NAME: only for a proxy you trust in front of the page "
+                             "(one exact name; repeat for more)")
     args = parser.parse_args(argv)
     if args.self_test:
         return self_test(args.demo)
+    try:
+        allowed = [check_allowed_host(name) for name in args.allow_host]
+    except InputValidationError as exc:
+        print(f"{exc.message} {exc.hint or ''}".strip(), file=sys.stderr)
+        return 2
 
     candidates = [args.port] if args.port else list(range(DEFAULT_PORT, DEFAULT_PORT + PORTS_TO_TRY))
     port = None
@@ -122,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
               "Choose another with --port.", file=sys.stderr)
         return 1
 
-    app = App(demo=args.demo)
+    app = App(demo=args.demo, allowed_hosts=allowed)
     try:
         server = create_server(app, port)
     except OSError as exc:
@@ -131,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Salesforce Ticket Investigator is running at {url}")
     print("It only answers on this computer. Press Ctrl+C to stop.")
+    if allowed:
+        print("It also answers requests addressed to: " + ", ".join(allowed) + " (allowed with --allow-host).")
     if app.demo:
         print("Demo mode: simulated orgs demo-prod, demo-sandbox and demo-dev. No real org is involved.")
     if not args.no_browser:

@@ -62,7 +62,7 @@ h3{font-size:.98rem;margin:18px 0 6px}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
 .btn.sm{padding:4px 10px;font-size:13px}
 label{font-weight:550;font-size:13.5px;display:block;margin:0 0 5px}
-input[type=text],select,textarea{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:9px 11px}
+input[type=text],input[type=password],select,textarea{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:9px 11px}
 textarea{min-height:300px;resize:vertical;font:13.5px/1.5 var(--mono)}
 input:focus,select:focus,textarea:focus,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .field{margin-bottom:14px}
@@ -215,7 +215,8 @@ async function api(path, options) {
     init.body = "{}";
   }
   let response;
-  try { response = await fetch(path, init); }
+  // Relative to the page ("api/…", not "/api/…"), so the page also works behind a proxy that serves it under a path.
+  try { response = await fetch(path.replace(/^\//, ""), init); }
   catch (error) { throw new Error("The interface is not answering. Is 'python -m webapp' still running?"); }
   const data = await response.json().catch(() => ({ ok: false, error: { message: "Unexpected answer from the server." } }));
   if (!data.ok) {
@@ -383,11 +384,11 @@ document.addEventListener("click", event => {
 window.addEventListener("hashchange", route);
 
 /* ---------- Get started ---------- */
+function loginAlias() { return (state.loginAlias || "my-org").replace(/[^A-Za-z0-9._@+-]/g, "-"); }
 function loginCommand() {
-  const alias = (state.loginAlias || "my-org").replace(/[^A-Za-z0-9._@+-]/g, "-");
   const urls = { sandbox: " --instance-url https://test.salesforce.com", production: "", developer: "",
                  custom: " --instance-url https://YOUR-DOMAIN.my.salesforce.com" };
-  return `sf org login web --alias ${alias}${urls[state.loginType]}`;
+  return `sf org login web --alias ${loginAlias()}${urls[state.loginType]}`;
 }
 async function viewStart(again) {
   const fresh = again === true ? "?refresh=1" : "";
@@ -452,6 +453,20 @@ async function viewStart(again) {
           <div class="small" style="margin-top:4px">3. Come back here and press <b>I have connected it</b>.</div>
           <p class="small muted" style="margin-top:10px">Use a login with only the access the investigation needs. Production is always read-only here, whatever the user is allowed to do.</p>
           <button class="btn sm" id="orgs-refresh">I have connected it</button>
+          <details id="paste-auth" style="margin-top:14px"><summary>No browser on the computer that runs the investigator? Paste an authorization instead</summary>
+            <p class="small muted" style="margin:10px 0 8px">For when this page runs somewhere you cannot log in from, such as a remote computer or a cloud session. On a computer that has the Salesforce CLI and a browser:</p>
+            <div class="small">1. Connect the org there, with the command above:</div>
+            <div id="login-cmd-2"></div>
+            <div class="small">2. Show its authorization:</div>
+            <div id="auth-url-cmd"></div>
+            <div class="small">3. Copy the line that starts with <code>force://</code> and paste it below. It works like a password: paste it only here, never in a chat, an email or a ticket.</div>
+            <div class="row" style="margin-top:8px;align-items:flex-end">
+              <div style="flex:1;min-width:220px"><label for="auth-url">Authorization (force://…)</label><input type="password" id="auth-url" autocomplete="off" spellcheck="false" placeholder="force://…"></div>
+              <button class="btn sm primary" id="auth-connect">Connect</button>
+            </div>
+            <div id="auth-result"></div>
+            <p class="small muted" style="margin-top:8px">The org gets the short name above. The authorization goes to the Salesforce CLI on the computer that runs this page, which keeps it; the page does not store it, and nothing in the org changes. To end it later: <code>sf org logout --target-org</code> and the name, on that computer, and in Salesforce revoke the Salesforce CLI under your user's OAuth Connected Apps.</p>
+          </details>
         </details>`}
         <div class="row" style="margin-top:12px">
           ${STATUS.demo ? `<button class="btn sm" id="demo-off">Use my own Salesforce orgs</button><button class="btn sm" id="demo-reset">Reset the demo orgs</button>`
@@ -491,7 +506,26 @@ async function viewStart(again) {
   const paintLogin = () => {
     const box = $("#login-cmd"); if (!box) return;
     box.innerHTML = cmd(loginCommand());
+    const again = $("#login-cmd-2"); if (again) again.innerHTML = cmd(loginCommand());
+    const show = $("#auth-url-cmd"); if (show) show.innerHTML = cmd(`sf org auth show-sfdx-auth-url --target-org ${loginAlias()}`);
     document.querySelectorAll("#login-type button").forEach(b => b.classList.toggle("on", b.dataset.type === state.loginType));
+  };
+  const connect = $("#auth-connect");
+  if (connect) connect.onclick = async () => {
+    const field = $("#auth-url"), out = $("#auth-result");
+    if (!field.value.trim()) { out.innerHTML = `<p class="small" style="color:var(--bad)">Paste the line that starts with force:// first.</p>`; return; }
+    connect.disabled = true;
+    out.innerHTML = `<p class="small muted">Connecting… This takes a few seconds.</p>`;
+    try {
+      const got = await api("/api/orgs/connect", { method: "POST", body: { alias: loginAlias(), auth_url: field.value } });
+      field.value = "";
+      toast(`Connected: ${got.connected.alias}`);
+      viewStart(true);
+    } catch (error) {
+      if (out.isConnected) out.innerHTML = errorBox(error);
+    } finally {
+      if (connect.isConnected) connect.disabled = false;
+    }
   };
   if (alias) {
     alias.oninput = () => { state.loginAlias = alias.value; paintLogin(); };
@@ -729,8 +763,8 @@ async function viewTicket(key) {
           <div class="row">${causeChip(t.root_cause_status)}</div>
           <div class="big prose">${t.root_cause_summary_html || esc(t.root_cause_summary || "")}</div>
           <div class="row small muted">Every claim is tied to an artifact. Open <b>Root cause</b> for the chain and <b>Evidence</b> for the files.
-            ${t.has_report_html ? `<a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/report.html" target="_blank" rel="noopener">Open printable report</a>` : ""}
-            <a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/result.zip" download>Download the result (.zip)</a></div>
+            ${t.has_report_html ? `<a class="btn sm" href="tickets/${encodeURIComponent(t.key)}/report.html" target="_blank" rel="noopener">Open printable report</a>` : ""}
+            <a class="btn sm" href="tickets/${encodeURIComponent(t.key)}/result.zip" download>Download the result (.zip)</a></div>
           ${t.evidence_check && !t.evidence_check.ok ? `<div class="banner bad" style="margin:0">${t.evidence_check.problems.map(esc).join("<br>")}</div>` : ""}
           ${t.open_questions_html && !/^\s*<p>\s*(none|no open questions?)\.?\s*<\/p>\s*$/i.test(t.open_questions_html) ? `<div class="banner warn" style="margin:0"><b>The investigator had questions it could not ask.</b> Answering them can turn an assumption into a confirmed fact.
             <div class="prose small">${t.open_questions_html}</div><a href="#add-info" id="answer-link">Answer below and investigate again</a></div>` : ""}
@@ -799,7 +833,7 @@ async function viewTicket(key) {
       else if (tab === "evidence") box.innerHTML = `<p class="small muted">Files saved in <code>tickets/${esc(t.key)}/</code>. Query results are stored with personal data redacted.</p>
         <div class="tablewrap"><table><thead><tr><th>Kind</th><th>File</th><th>What it holds</th></tr></thead><tbody>${t.evidence.map(a => `
           <tr><td>${esc(String(a.kind).replace(/_/g, " "))}</td><td><code>${esc(a.path)}</code></td><td>${esc(a.description)}</td></tr>`).join("")}</tbody></table></div>`;
-      else if (tab === "ticket") box.innerHTML = (t.has_pdf ? `<p><a class="btn sm" href="/tickets/${encodeURIComponent(t.key)}/ticket.pdf" target="_blank" rel="noopener">Open the ticket's PDF</a></p>` : "") + (t.ticket_html ? `<div class="prose">${t.ticket_html}</div>` : `<p class="muted small">Not structured yet. This is the text as pasted:</p>`) +
+      else if (tab === "ticket") box.innerHTML = (t.has_pdf ? `<p><a class="btn sm" href="tickets/${encodeURIComponent(t.key)}/ticket.pdf" target="_blank" rel="noopener">Open the ticket's PDF</a></p>` : "") + (t.ticket_html ? `<div class="prose">${t.ticket_html}</div>` : `<p class="muted small">Not structured yet. This is the text as pasted:</p>`) +
         (t.original_text ? `<details ${t.ticket_html ? "" : "open"}><summary>Original text as pasted</summary><pre class="plain" style="margin-top:8px">${esc(t.original_text)}</pre></details>` : "");
       else if (tab === "activity") box.innerHTML = `<ul class="feed">${events.map(feedItem).join("")}</ul>`;
     };

@@ -175,6 +175,16 @@ Developer Edition org for testing.
 Done since: a complete AI investigation started from the page was run (see the README, "The web
 interface and the org memory", under what was verified).
 
+## Decisions for connecting an org where there is no browser
+
+Taken after the owner offered to log in to their Developer Edition org for the cloud session:
+"create a claude web page or something and ill login for you".
+
+| # | Decision | Reason |
+|---|---|---|
+| 77 | **The page can connect an org from an authorization URL** (`force://…`, from `sf org auth show-sfdx-auth-url` on a computer with a browser). The URL goes to `sf org login sfdx-url --sfdx-url-stdin -` on standard input, through a dedicated `SfCli.connect_with_auth_url`; it is never in a command line, a log, an answer or an error, and the page stores nothing. Refused in demo mode. | The installed CLI (2.158.7) has no device login any more, and a web login needs a browser on the same machine. The URL's host is the only address the CLI then contacts, so a cloud session needs exactly one host allowed. `org login` stays a write for the generic runner, so nothing else can reach it; Claude Code is not given it: the user pastes, the user presses Connect. It changes nothing in any org, and every write still goes through the guard, which asks the org what it is every time. |
+| 78 | **`--allow-host NAME`** lets the page answer one exact extra name, for a proxy the user trusts in front of it (a cloud session's preview). Refused names are printed once in the window. No wildcard; loopback names are already allowed. The page now asks for `api/…` relative to itself, so it also works when a proxy serves it under a path. | The host check stops a website from reaching the page through a name that points at 127.0.0.1. A preview proxy is reached by its own name; allowing that one name, on purpose, keeps the check for everything else. |
+
 ## Open points for the owner
 
 00. **First run on your computer.** Double-click `start-demo.bat` or `start-demo.command`, then

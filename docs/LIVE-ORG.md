@@ -1,13 +1,15 @@
 # Testing with your Developer Edition org
 
 Everything so far was checked against simulated orgs. Your Developer Edition org can check it
-against the real thing. You do the steps on your own computer, because:
+against the real thing, in one of two ways:
 
-- the investigator reaches Salesforce through the Salesforce CLI, which logs in through your
-  browser. That works on your computer;
-- the cloud session where the tool was built cannot reach Salesforce (its network does not allow
-  it), and the project's rules stop the assistant from running the Salesforce CLI itself. That
-  rule is what keeps production read-only, so it is not worked around, not even for a test org.
+- **On your own computer**, parts 1 to 5 below. The investigator reaches Salesforce through the
+  Salesforce CLI, which logs in through your browser.
+- **In Claude's cloud session**, where the tool is being built: see
+  [Letting a cloud session use your org](#letting-a-cloud-session-use-your-org). You log in, on
+  your computer; the session gets an authorization you paste into the investigator's page. The
+  project's rules stop the assistant from running the Salesforce CLI itself, and that rule is not
+  worked around, not even for a test org.
 
 Pick how far you go. Each part is useful on its own.
 
@@ -125,6 +127,40 @@ the records, then roll back. Nothing happens without your approval of each step.
    check the cases, then roll back the deploy.*
 4. Approve or refuse each step when it asks.
 5. Set the two settings back to `"advise"` and `false`.
+
+## Letting a cloud session use your org
+
+A Claude Code cloud session runs in a container with no browser, and its network reaches only
+the hosts its environment allows. The Salesforce CLI 2.158 no longer has a code-based (device)
+login. So the session uses the same route as any computer without a browser: you log in on your
+computer and paste the resulting authorization into the investigator's page running in the
+session.
+
+1. On your computer, with the org connected as in part 1, show its authorization:
+
+   ```
+   sf org auth show-sfdx-auth-url --target-org my-dev
+   ```
+
+   Keep the line that starts with `force://`. It works like a password: never paste it in the
+   chat.
+2. The session needs to reach your org's address and nothing else: the part after `@` in that
+   line, also shown in Salesforce under **Setup → My Domain** (for example
+   `yourname-dev-ed.develop.my.salesforce.com`). Claude asks you to allow it with an approval
+   card; that changes the session's network settings, which only you can do.
+3. Claude starts the page in the session (`python -m webapp --no-browser`, with `--allow-host`
+   for the preview's name if the preview needs it) and tells the Claude app its port. Open the
+   preview, then **Get started → Connect an org → No browser on the computer that runs the
+   investigator?** Type the name `my-dev`, paste the line, press **Connect**.
+4. Tell Claude it is connected. It checks the read-only tools against your org through its own
+   investigator tools, never with the Salesforce CLI directly. Writes to a Developer Edition
+   org stay blocked unless you set `"allow_developer_edition_writes": true` in
+   `sfti.config.json` yourself, and each one still asks you.
+
+To end it: the session's container is discarded when the session ends. To cut the access at
+once, revoke it in Salesforce: your personal settings, **Advanced User Details**, **OAuth
+Connected Apps**, **Revoke** next to the Salesforce CLI. That also signs out the Salesforce CLI on
+your own computer for this org; log in there again with part 1.
 
 ## Removing the sample afterwards
 
