@@ -11,12 +11,18 @@ Two runners:
   - the read-only investigator tools are allowed by name, taken from the server's own list;
   - the tools that change an org are removed altogether, together with web access. Nobody is
     there to approve a write, so none can happen;
+  - of Claude Code's own tools it gets only those an investigation uses (``--tools``): reading,
+    searching and writing files, loading the investigator's tools, and helper agents. Each tool
+    it does not get is also a description less in every request (measured: a starting context
+    of 11,600 tokens instead of 41,300);
   - file edits are accepted so that it can write the ticket folder. The project's permission
     rules still deny edits to the safety files.
 
   With **Use fewer tokens** the run also uses Sonnet (unless a model was chosen), medium effort,
-  no subagents and no skill listing, and is told to economize. A spending limit, when set, is
-  passed to Claude Code (``--max-budget-usd``), which stops the run when it is reached.
+  the 5-minute prompt cache instead of the 1-hour one (its writes cost 1.25 times the input price
+  instead of 2; an unattended run never pauses long enough to need the longer one), no subagents
+  and no skill listing, and is told to economize. A spending limit, when set, is passed to Claude
+  Code (``--max-budget-usd``), which stops the run when it is reached.
 * ``sample``: replays the recorded DEMO-101 investigation against the simulated org, without the
   AI agent (see ``simulator.demo``).
 
@@ -48,12 +54,16 @@ MAX_EVENTS = 2000
 BUILTIN_ALLOWED = ("Read", "Glob", "Grep", "Skill", "Task", "Agent", "TodoWrite", "ToolSearch")
 #: Removed from an unattended investigation, on top of the org write tools: no shell, no web.
 BUILTIN_REFUSED = ("Bash", "WebFetch", "WebSearch")
+#: The only Claude Code tools an unattended investigation has at all (``--tools``). Write and Edit
+#: write the ticket's folder (accepted by the permission mode); ToolSearch loads the investigator's tools.
+BUILTIN_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "Skill", "Task", "Agent", "TodoWrite")
 #: Model names offered on the page. Empty means "whatever Claude Code uses by default".
 MODEL_CHOICES = {"": "Claude Code's default", "sonnet": "Sonnet: faster, uses less", "opus": "Opus: most thorough"}
 #: What "Use fewer tokens" changes. Each item is a command-line option; see build_command.
 ECONOMY_MODEL = "sonnet"
 ECONOMY_EFFORT = "medium"
 ECONOMY_REFUSED = ("Task", "Agent")  # subagents start a fresh context and re-read what the main run has read
+ECONOMY_CACHE_TTL = "5m"  # Claude Code's CLAUDE_CODE_PROMPT_CACHE_TTL; on a subscription it uses "1h" by default
 
 #: What each tool call means, in words a non-developer can follow.
 TOOL_LABELS = {
@@ -126,6 +136,14 @@ def chosen_model(request: dict[str, Any]) -> str | None:
     return value if value and MODEL_RE.match(value) else None
 
 
+def run_environment(base: dict[str, str], *, economy: bool = False) -> dict[str, str]:
+    """The environment of an unattended run: the page's, plus the shorter prompt cache when saving tokens."""
+    env = dict(base)
+    if economy:
+        env["CLAUDE_CODE_PROMPT_CACHE_TTL"] = ECONOMY_CACHE_TTL
+    return env
+
+
 def build_command(executable: str, root: Path, model: str | None = None, *, economy: bool = False,
                   budget_usd: float | None = None) -> list[str]:
     """The exact command line of an unattended investigation. The module text says what each part is for."""
@@ -135,6 +153,9 @@ def build_command(executable: str, root: Path, model: str | None = None, *, econ
     if server_config.is_file():
         command += ["--mcp-config", str(server_config), "--strict-mcp-config"]
     command += ["--allowedTools", ",".join(allowed), "--disallowedTools", ",".join(refused)]
+    given = [name for name in BUILTIN_TOOLS if name not in BUILTIN_REFUSED
+             and not (economy and (name in ECONOMY_REFUSED or name == "Skill"))]
+    command += ["--tools", ",".join(given)]
     if economy:
         # The investigator reads the project's step descriptions as files (the prompt names them), so the
         # list of every skill on the computer does not need to be in its context.
@@ -484,7 +505,8 @@ class Runner:
             kwargs["start_new_session"] = True
         try:
             process = subprocess.Popen(
-                command, cwd=str(self.root), env=self._child_env(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                command, cwd=str(self.root), env=run_environment(self._child_env(), economy=bool(request.get("economy"))),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", **kwargs)
         except OSError as exc:
             run.add({"kind": "error", "label": "Claude Code could not be started", "detail": str(exc)[:300]})

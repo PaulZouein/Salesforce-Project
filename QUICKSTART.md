@@ -51,7 +51,8 @@ read-only here whatever your user is allowed to do.
 
 ## 4. Investigate a ticket
 
-1. **New ticket**: paste the whole ticket, comments included. Choose the org where it happens.
+1. **New ticket**: paste the whole ticket, comments included, or **Upload a PDF** of it
+   (exported or printed from Jira). Choose the org where it happens.
 2. **Investigate with Claude Code**: you see each step as it happens. A typical ticket takes a
    few minutes.
 3. Read the result: **Root cause** (every claim tied to a file and line, a saved query or a log
@@ -82,7 +83,12 @@ your computer.
 - **Deploying a fix to a sandbox** is done from the terminal, where you approve each step:
   double-click `claude-here.bat` (Windows) or `claude-here.command` (macOS). See *The two modes* in
   `README.md`.
-- **Faster and cheaper runs**: choose *Sonnet* next to the Investigate button.
+- **What it costs**: the *Claude usage* box (sidebar, or a pill at the bottom on a phone) shows
+  the running investigation's tokens and estimated price as it works, today's total, and how much
+  of your plan's limits is used.
+- **Cheaper runs**: tick **Use fewer tokens**, and set **Stop if it costs more than $…** if you
+  want a hard limit. Or choose *Sonnet* next to the Investigate button.
+- **Have a Developer Edition org?** `docs/LIVE-ORG.md` tries everything on it, safely.
 - **Stop**: close the small window, or press Ctrl+C in it.
 - **Update**: unzip the new version over the old one and start again. Your `tickets` and
   `knowledge` folders are kept.

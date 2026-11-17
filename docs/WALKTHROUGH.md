@@ -133,6 +133,21 @@ Memory is a lead, never evidence: a report cites only what was read during that 
 
 ![How it stays safe](images/steps/16-how-it-stays-safe.png)
 
+## Added since the recording
+
+The video and the screenshots above were recorded before three additions.
+
+**The usage box.** In the sidebar (a pill on a phone): what the running investigation has used,
+in tokens and as an estimated price, updating as it works; then the last run, today's total and
+your plan's limits.
+
+![The usage box while an investigation runs](images/web-usage-box.png)
+
+**Use fewer tokens**, and a spending limit, on New ticket and next to the Investigate button.
+**Upload a PDF** on New ticket, for a ticket exported or printed from Jira.
+
+![New ticket with a PDF read, Use fewer tokens and a spending limit](images/web-new-ticket-pdf.png)
+
 ## What the walk-through does not show
 
 - **The first start.** The start script creates a private Python environment and installs the

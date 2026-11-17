@@ -417,6 +417,7 @@ async function viewStart(again) {
         <td id="org-class-${esc(o.alias || o.username)}">${classChip(null)}</td>
         <td class="small muted" id="org-note-${esc(o.alias || o.username)}"></td></tr>`).join("");
 
+  if (!$("#start-steps")) return;  // the user went to another page meanwhile
   $("#start-steps").innerHTML = `
     ${pre.error ? errorBox(pre.error) : ""}
     <div class="card step ${toolsOk ? "done" : "todo"}">
@@ -576,12 +577,13 @@ async function viewNew() {
   key.oninput = () => { keyTouched = true; };
   text.oninput = () => { if (!keyTouched) key.value = detectKey(text.value); };
   const paintKind = async () => {
-    const name = org.value; if (!name) return;
-    $("#org-kind").innerHTML = classChip(null);
+    const name = org.value, kind = $("#org-kind"); if (!name || !kind) return;
+    kind.innerHTML = classChip(null);
+    // The answer can arrive after the user has left this page: write only into the element still shown.
     try { const info = state.orgInfo[name] || await api("/api/orgs/" + encodeURIComponent(name)); state.orgInfo[name] = info;
-          if (org.value === name) $("#org-kind").innerHTML = classChip(info.classification) +
+          if (org.value === name && kind.isConnected) kind.innerHTML = classChip(info.classification) +
             (info.org_memory && info.org_memory.components ? ` <span class="chip">${info.org_memory.components} components remembered</span>` : ""); }
-    catch (error) { $("#org-kind").innerHTML = `<span class="chip bad">Could not be checked</span>`; }
+    catch (error) { if (kind.isConnected) kind.innerHTML = `<span class="chip bad">Could not be checked</span>`; }
   };
   org.onchange = paintKind; paintKind();
   const loadSample = async () => {
@@ -638,9 +640,11 @@ async function viewTickets() {
   await refreshStatus();
   const data = await api("/api/tickets");
   if (!data.tickets.length) {
+    if (!$("#list")) return;
     $("#list").innerHTML = `<div class="card empty"><p>No ticket yet.</p><a class="btn primary" href="#/new">New ticket</a></div>`;
     return;
   }
+  if (!$("#list")) return;
   $("#list").innerHTML = `<div class="card" style="padding:6px 10px"><div class="tablewrap"><table>
     <thead><tr><th>Ticket</th><th>Org</th><th>Status</th><th>Root cause</th><th>Evidence check</th><th>Created</th></tr></thead>
     <tbody>${data.tickets.map(t => `
@@ -903,6 +907,7 @@ async function viewMemory(orgId) {
   await refreshStatus();
   const known = (await api("/api/memory")).orgs;
   if (!known.length) {
+    if (!$("#memory")) return;
     $("#memory").innerHTML = `<div class="card empty"><p>Nothing remembered yet.</p><p class="small">The memory fills by itself during investigations: every component the investigator retrieves is added to the map.</p><a class="btn primary" href="#/new">Investigate a ticket</a></div>`;
     return;
   }
@@ -912,6 +917,7 @@ async function viewMemory(orgId) {
   const paint = verified => {
     const status = verified ? verified.components : {};
     const staleIds = new Set(verified ? verified.stale_notes : map.notes.filter(n => n.stale).map(n => n.id));
+    if (!$("#memory")) return;
     $("#memory").innerHTML = `
       <div class="row" style="margin-bottom:14px">${known.map(o => `<a class="chip ${o.org_id === current.org_id ? "ok" : ""}" style="text-decoration:none" href="#/memory/${esc(o.org_id)}">${esc((o.aliases || []).join(", ") || o.org_id)}</a>`).join("")}</div>
       <div class="tiles">

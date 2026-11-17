@@ -19,6 +19,8 @@ planted bug, so you need no Salesforce account to try it.
 - [`QUICKSTART.md`](QUICKSTART.md): one page, from nothing to a first result.
 - [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md): every step with a screenshot, and a short
   [demo video](docs/demo/ticket-investigator-demo.mp4).
+- [`docs/LIVE-ORG.md`](docs/LIVE-ORG.md): trying it on your own Developer Edition org, with a
+  read-only check of every tool and the sample bug deployed for real.
 - From a terminal the same is `python -m webapp --demo`, after installing (three commands, below).
 
 ![The result page: root cause, evidence check, tabs for the fix, the report and the comment](docs/images/web-result.png)
@@ -83,7 +85,7 @@ open Claude Code in the folder with the investigator's tools, for working in the
 | Page | What you do there |
 |---|---|
 | **Get started** | Four steps. It checks Python, git, the Salesforce CLI and Claude Code and, for anything missing, shows the command that installs it on your system. It lists your connected orgs with what each one is (production, sandbox…). To connect one, you type a name, pick the kind of org, and copy the exact `sf org login web …` command it builds. |
-| **New ticket** | Paste the ticket as it is, comments included. The key is found in the text. Choose the org where the problem happens, a sandbox for tests if you have one, and the model. |
+| **New ticket** | Paste the ticket as it is, comments included, or **upload it as a PDF** exported or printed from Jira. The key is found in the text. Choose the org where the problem happens, a sandbox for tests if you have one, the model, and whether to **use fewer tokens**. |
 | **The ticket page** | Start the investigation and watch it: each step in plain words ("Querying records", "Reading source", "Checking the report's evidence"). Then the result: the root cause and whether it is confirmed, the evidence check, and tabs for the cause with its evidence chain, the fix as a diff with the test plan, the full report, the draft comment with a copy button, the saved evidence files, and the ticket as it was read. The investigator's open questions are shown at the top; **Add information** takes your answer, a correction or a file and runs again from what was found; **Download the result** gives the report, the comment and the fix as one zip. |
 | **Tickets** | Everything investigated on this computer, with status and root-cause state. |
 | **Org memory** | What has been learned about each org, a search box that asks it what the investigator would ask, and a button to check it against the org. See below. |
@@ -113,6 +115,10 @@ terminal).
   Claude Code for other things are not available to the investigation.
 - The read-only investigator tools are allowed by name, taken from the server's own list.
 - The six tools that change an org are removed, together with the shell and web access.
+- Of Claude Code's own tools it gets only those an investigation uses: reading, searching and
+  writing files, loading the investigator's tools, and helper agents. Every other tool's
+  description would be sent with each step; leaving them out took the starting context from
+  41,300 tokens to 11,600 in a measurement.
 - It may write files, which it needs for the ticket's folder. The project's rules still refuse
   edits to the safety files.
 
@@ -135,6 +141,64 @@ hypothesis it settled and kept the one it did not.
 ![Add information: a note or a file for the next run](docs/images/web-add-information.png)
 
 A run that ends without writing a report is shown as *Stopped before the report*, not as done.
+
+### What an investigation costs, and using fewer tokens
+
+**The usage box** is on every page: in the sidebar on a computer, a small pill at the bottom on a
+phone. While an investigation runs it shows what it has used so far, in tokens and as an
+estimated price, and updates every second or two. Below that: the last run, today's total, and
+your plan's limits.
+
+![The usage box in the sidebar while an investigation runs](docs/images/web-usage-box.png)
+
+- **The price** is estimated from the tokens Claude Code reports for each step, at Anthropic's
+  API list prices. When the run ends, Claude Code reports its own total, which replaces the
+  estimate (on two recorded runs the estimate was within 1 to 4 percent of it). With a Claude
+  subscription you are not charged per token: the figure tells you what the run would cost at
+  API prices, and the run counts toward your plan's limits.
+- **Plan** shows the share of your 5-hour and weekly limits already used, as Claude Code reports
+  it during a run. It appears after the first run and is shown as of then.
+- Each finished run is kept in `usage/ledger.jsonl` on this computer (ticket key, tokens, price,
+  settings; nothing else). Runs you start yourself in Claude Code are not counted here; use
+  `/cost` or `/usage` there.
+
+**Use fewer tokens** (a tick box on New ticket and next to the Investigate button) changes four
+things for that ticket:
+
+| What | Why it saves |
+|---|---|
+| Sonnet, unless you chose a model | a lower price per token |
+| Medium effort instead of Claude Code's default | less deliberation and fewer, larger steps |
+| No helper agents, and no list of every skill on your computer | a helper agent starts a fresh context and reads again what the main run read; the skill list is sent with every step |
+| The 5-minute prompt cache instead of the 1-hour one | on a subscription Claude Code keeps the context cached for an hour, and writing it then costs twice the input price instead of 1.25 times; an unattended run never pauses long enough to need the hour |
+| An instruction to economise: make independent calls together, read only what a hypothesis needs, read each file once, write short | fewer steps, smaller context |
+
+The evidence rules do not change: every claim still needs an artifact, and the report must still
+pass the evidence check. Measured on the sample ticket, one run each:
+
+| Run of the sample ticket (Sonnet) | Cost | Steps | Result |
+|---|---|---|---|
+| Three runs without the option | $0.44 to $0.77 | 39 to 58 | root cause confirmed |
+| With the first version of the option (without the 5-minute cache, and with all of Claude Code's tools) | $0.51 | 13 | confirmed, evidence check passed |
+| With the option as it is now | **$0.26** | 15 | confirmed, evidence check passed (8 citations) |
+
+The first version took fewer steps but cost about the same, because most of the price was
+context written to the cache: 82,000 tokens at twice the input price. Trimming Claude Code's
+tools (now done for every run from the page) and the 5-minute cache halved that. The cost of a
+run varies from one run to the next, so these are indications, not averages. Runs without the
+option also start from the trimmed tool list now; that was not measured separately.
+
+**Stop if it costs more than $…** sets a spending limit for each run. Claude Code stops the run
+when it is reached; the page says *Stopped at your spending limit*, keeps what was found, and
+*Continue* goes on from there.
+
+### A ticket as a PDF
+
+**Upload a PDF** on New ticket takes a PDF of the ticket, exported or printed from Jira. Its text
+fills the form so that you can check it; the PDF itself is kept with the ticket
+(`attachments/ticket-original.pdf`), and the investigator is told to open it for what the text
+loses, such as tables or screenshots. For a scanned PDF without text, type the key: the
+investigator reads the PDF itself. Up to 10 MB; the first 80 pages are read as text.
 
 ![Progress while the investigation runs](docs/images/web-progress.png)
 
@@ -647,13 +711,22 @@ path.
   warning Windows and macOS show for a downloaded script (the two notes in `QUICKSTART.md` come
   from the systems' documentation); a company proxy that blocks `pypi.org`.
 - **Not verified:** an investigation started from the page on a real org, and on Windows or
-  macOS (the three runs were on Linux). Time and usage will differ there.
+  macOS (the runs were on Linux). Time and usage will differ there.
+- **The usage box and Use fewer tokens:** checked with two real runs of the sample ticket with
+  *Use fewer tokens* on, before and after trimming Claude Code's tools and adding the 5-minute
+  cache: Claude Code accepted the options, the box followed each run, and the figures are above.
+  The trimmed tool list was also checked with a short session that loads and calls an
+  investigator tool. The PDF upload was checked in a browser with a stand-in for Claude Code;
+  a real investigator opening a ticket's PDF was not run.
+- **The kit for a real org** (`docs/LIVE-ORG.md`, `scripts/live_check.py`, `samples/live-org`)
+  was checked against the simulated orgs only.
 - The org memory's change check was exercised against the simulator only. On a real org it
   depends on `LastModifiedDate` of `ApexClass`, `ApexTrigger` and `Flow` through the Tooling API.
 
 ### Not verified against a live org
 
-No Salesforce org was reachable while this was built. The following comes from documentation and
+No Salesforce org was reachable while this was built. `docs/LIVE-ORG.md` is how to check all of
+this on your own Developer Edition org in about half an hour. The following comes from documentation and
 from the CLI's source, and may need adjusting on first contact with a real org:
 
 - `Organization.IsSandbox` being `true` for scratch orgs.
@@ -705,6 +778,8 @@ of them reports an error for a section, that is one of the items above.
 | Every tool call is blocked right after pulling | The hook cannot lock a session by design. If it happens, check that `.claude/hooks/guard.py` exists and that `python` (or `SFTI_PYTHON`) runs; then report it. To get out, run `python scripts/generate_settings.py --no-guard` in your own terminal. |
 | You want to start a ticket again | Delete `tickets/<KEY>/` yourself, or use **Delete** on the ticket's page. |
 | The investigation stops with a sign-in message | Run `claude` once in a terminal and sign in. |
+| "Stopped at your spending limit" | The run reached the limit you set. Raise or clear the limit next to the Investigate button and start it again: it continues from what it found. |
+| "Reading PDF files needs the pypdf package" | The project was installed before PDFs were supported. Start it with its start script again, which installs what is missing. |
 | The ticket shows "Stopped before the report" | Claude Code ended without writing one. Open **Activity** for its last message, add what it was missing under **Add information**, and start it again: it continues from what it gathered. |
 | The page says "The sf-investigator tools did not start" | Same cause as a failed server in `/mcp`: see the first row. The page starts Claude Code with the Python that runs the page, so start the page with the `start` script, or from the project's virtual environment. |
 | `python -m webapp` says it could not listen | Ports 8765 to 8774 are all used by other programs. Use `--port 9000`. |

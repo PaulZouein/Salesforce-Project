@@ -291,10 +291,11 @@ def test_walk_through_shows_every_step_with_a_picture_that_exists():
 
     text = (ROOT / "docs" / "WALKTHROUGH.md").read_text(encoding="utf-8")
     pictures = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
-    assert len(pictures) == 16 and len(set(pictures)) == 16
     for picture in pictures:
         assert (ROOT / "docs" / picture).is_file(), picture
-    assert [int(p.split("/")[-1][:2]) for p in pictures] == list(range(1, 17))      # in order, none skipped
+    steps = [p for p in pictures if p.startswith("images/steps/")]
+    assert len(steps) == 16 and len(set(steps)) == 16
+    assert [int(p.split("/")[-1][:2]) for p in steps] == list(range(1, 17))      # in order, none skipped
     video = re.search(r"\]\((demo/[^)]+\.mp4)\)", text)
     assert video and (ROOT / "docs" / video.group(1)).is_file()
     assert 500_000 < (ROOT / "docs" / video.group(1)).stat().st_size < 12_000_000

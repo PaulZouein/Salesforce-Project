@@ -82,7 +82,8 @@ asks the org whether each remembered component changed since it was learned.
 
 `python -m webapp` (or the `start` scripts) is a local page for the same work: set-up checks, a
 form for the ticket, progress, results and the org memory. Tickets submitted there are in
-`tickets/<KEY>/` with the original text in `attachments/ticket-original.txt`. Files named
+`tickets/<KEY>/` with the original text in `attachments/ticket-original.txt` (and, for a ticket
+uploaded as a PDF, the PDF in `attachments/ticket-original.pdf`: open it for what the text lost). Files named
 `attachments/follow-up-NN.txt` are what the user added after an earlier run (an answer to an open
 question, a correction): they are part of the ticket, and the newest wins where they disagree.
 When the page starts you unattended, nobody can approve anything: you have the read-only tools

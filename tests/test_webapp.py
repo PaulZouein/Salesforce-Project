@@ -366,7 +366,8 @@ if "--version" in args:      # the page asks for this from wherever it runs: ans
 record = os.environ["FAKE_CLAUDE_RECORD"]
 prompt = sys.stdin.read()
 open(record, "w", encoding="utf-8").write(json.dumps({"args": args, "prompt": prompt, "cwd": os.getcwd(),
-    "sf": os.environ.get("SFTI_SF_EXECUTABLE"), "python": os.environ.get("SFTI_PYTHON")}))
+    "sf": os.environ.get("SFTI_SF_EXECUTABLE"), "python": os.environ.get("SFTI_PYTHON"),
+    "cache_ttl": os.environ.get("CLAUDE_CODE_PROMPT_CACHE_TTL")}))
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 def out(obj):
     sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
@@ -460,6 +461,11 @@ def test_agent_run_starts_claude_code_unattended_and_reports_progress(web, fake_
         assert agent.TOOL_PREFIX + name in refused and agent.TOOL_PREFIX + name not in allowed
     for builtin in ("Bash", "WebFetch", "WebSearch"):
         assert builtin in refused and builtin not in allowed
+    # Of Claude Code's own tools, it has only those an investigation uses: nothing that runs commands,
+    # reaches the web, schedules, or sends messages.
+    given = args[args.index("--tools") + 1].split(",")
+    assert set(given) == {"Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "Skill", "Task", "Agent", "TodoWrite"}
+    assert call["cache_ttl"] is None          # Claude Code's own choice of prompt cache, unless saving tokens
     assert not any("bypass" in a.lower() or "dangerously" in a.lower() for a in args)
     assert "--model" not in args and "--mcp-config" not in args   # no model chosen; this test project has no .mcp.json
 
@@ -892,6 +898,8 @@ def test_use_fewer_tokens_changes_what_claude_code_is_given(web, fake_claude, mo
     refused = args[args.index("--disallowedTools") + 1].split(",")
     allowed = args[args.index("--allowedTools") + 1].split(",")
     assert {"Task", "Agent"} <= set(refused) and not {"Task", "Agent"} & set(allowed)
+    assert args[args.index("--tools") + 1].split(",") == ["Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "TodoWrite"]
+    assert json.loads(fake_claude.read_text(encoding="utf-8"))["cache_ttl"] == "5m"   # writes at 1.25x, not 2x
     assert "Read" in allowed and agent.TOOL_PREFIX + "soql_query" in allowed
     # An explicitly chosen model stays; the other savings still apply. Turning it off restores the defaults.
     web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "model": "opus"})
@@ -900,8 +908,10 @@ def test_use_fewer_tokens_changes_what_claude_code_is_given(web, fake_claude, mo
     assert args[-2:] == ["--model", "opus"] and "--effort" in args
     web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "model": "", "economy": False, "budget_usd": ""})
     detail = web.wait_until_finished("DEMO-101")
-    args = json.loads(fake_claude.read_text(encoding="utf-8"))["args"]
+    call = json.loads(fake_claude.read_text(encoding="utf-8"))
+    args = call["args"]
     assert not {"--effort", "--disable-slash-commands", "--max-budget-usd", "--model"} & set(args)
+    assert call["cache_ttl"] is None and "Task" in args[args.index("--tools") + 1]
     assert detail["economy"] is False and detail["budget_usd"] is None
     assert "as few tokens" not in detail["prompt"]
 
