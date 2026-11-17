@@ -1,0 +1,7 @@
+{
+  "records": [
+    { "attributes": { "type": "Account", "referenceId": "PremiumA" }, "Name": "Sample Premium A", "Support_Tier__c": "Premium" },
+    { "attributes": { "type": "Account", "referenceId": "StandardB" }, "Name": "Sample Standard B", "Support_Tier__c": "Standard" },
+    { "attributes": { "type": "Account", "referenceId": "PremiumC" }, "Name": "Sample Premium C", "Support_Tier__c": "Premium" }
+  ]
+}

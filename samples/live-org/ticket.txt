@@ -1,0 +1,30 @@
+Key: LIVE-1
+Title: Some Premium cases from the order import stay Medium priority
+Type: Bug
+Status: Open
+Priority: High
+Environment: Developer Edition org (the one the sample was deployed to)
+
+Description
+-----------
+Every case for an account whose Support Tier is Premium must be created with Priority High, so that it
+is answered within the hour. This morning four cases were imported from the order system in one batch
+(subjects "Order 5001" to "Order 5004"). Two of the Premium cases came in as Medium.
+
+Cases that agents create one at a time are fine.
+
+Steps to reproduce
+------------------
+1. Import several cases in one batch, for a mix of Premium and Standard accounts.
+2. Look at the Priority of the Premium cases.
+
+Expected result: every case of a Premium account has Priority High.
+Actual result: some of them have Priority Medium.
+
+Comments
+--------
+[support team lead] The accounts "Sample Premium A" and "Sample Premium C" are Premium, "Sample Standard B"
+is Standard. Order 5001 is fine, 5003 and 5004 are not.
+
+[Salesforce admin] Nothing on Case was changed by hand recently, as far as I know. I turned on a debug log
+for my user before the import, so there should be a log of it.

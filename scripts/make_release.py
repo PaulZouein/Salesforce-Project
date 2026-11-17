@@ -27,7 +27,7 @@ INCLUDE = (
 )
 #: Never shipped, wherever they are.
 EXCLUDED_DIRECTORIES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", "venv", "state", "tickets",
-                                  "knowledge", "audit", "usage", "dist", "build", "node_modules", ".sf", ".sfdx"})
+                                  "knowledge", "audit", "usage", "live-check", "dist", "build", "node_modules", ".sf", ".sfdx"})
 EXCLUDED_FILES = frozenset({".DS_Store", "settings.local.json", "Thumbs.db"})
 #: Not shipped: leftovers, and the demo video (it is linked from the README; the zip stays small).
 EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".egg-info", ".log.tmp", ".mp4", ".webm")

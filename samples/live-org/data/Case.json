@@ -1,0 +1,8 @@
+{
+  "records": [
+    { "attributes": { "type": "Case", "referenceId": "Case1" }, "Subject": "Order 5001 not delivered", "Origin": "Web", "AccountId": "@PremiumA" },
+    { "attributes": { "type": "Case", "referenceId": "Case2" }, "Subject": "Order 5002 wrong address", "Origin": "Web", "AccountId": "@StandardB" },
+    { "attributes": { "type": "Case", "referenceId": "Case3" }, "Subject": "Order 5003 arrived damaged", "Origin": "Web", "AccountId": "@PremiumA" },
+    { "attributes": { "type": "Case", "referenceId": "Case4" }, "Subject": "Order 5004 item missing", "Origin": "Web", "AccountId": "@PremiumC" }
+  ]
+}

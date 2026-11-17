@@ -7,6 +7,8 @@ audit/
 knowledge/
 # What investigations used (tokens, estimated cost, plan limits). Local only.
 usage/
+# Reports of scripts/live_check.py: yours to read, and to send if you choose.
+live-check/
 # Python
 __pycache__/
 *.py[cod]
