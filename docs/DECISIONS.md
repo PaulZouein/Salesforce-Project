@@ -130,15 +130,39 @@ anything changed".
 
 | 54 | Supported systems are Windows and macOS. CI runs on those two; Linux was removed from the matrix. | The owner's decision. The code paths for Linux stay, because the build sessions run on it, but nothing is promised there. |
 
-Not done, and why: a complete AI investigation started from the page was not run during the
-build (see the README, "The web interface and the org memory", under what was verified).
+## Decisions for the live path, easy set-up and follow-ups
+
+Taken after the owner asked to adjust "memory, interface user friendliness, easiness to set up
+(make a zip containing what is needed, with a clear easy readme), efficiency, review, tests",
+and later for "a video demo or screenshots of every step".
+
+| # | Decision | Reason |
+|---|---|---|
+| 55 | **The page states on Claude Code's command line what an unattended investigation may use**: only the project's own MCP server (`--strict-mcp-config`), the read-only tools by name from the server's registry, and the org write tools, the shell and web access removed. Replaces decision 51 and narrows decision 48. | Found by experiment: a tool named on the command line works in a folder Claude Code was never opened in, so the one-time trust step is not needed and the run no longer depends on the user's own Claude Code set-up. Connectors the user has for other things are out of reach of a run nobody watches (rules 7 and 8). Removing the write tools is stronger than leaving them to be refused (rule 6). Nothing is pre-approved that the committed settings do not already allow. |
+| 56 | A run that ends without a report is "incomplete", not "finished". A run whose tool server did not start is stopped at once. Nothing is reported after a run was stopped. | Each was a way for the page to say something untrue about a run. |
+| 57 | **Follow-ups.** What the user adds after a run (text, or a file of a listed type, 5 MB at most, 20 per ticket, the name reduced to a plain file name) is saved in `attachments/`. The next run is told to read it and to continue from the ticket folder. | An unattended run cannot ask (rule 2), so its questions come back as open questions; this is how the user answers them. Continuing costs half of starting again in the recorded follow-up. |
+| 58 | A model can be chosen per ticket, or with `SFTI_CLAUDE_MODEL`. The name must be a plain word, so it cannot carry a command-line option. | The owner hits usage limits; Sonnet did the sample ticket in two minutes. |
+| 59 | `describe_object`, `find_dependencies`, `recent_org_changes` and `record_history` can save their answer under `queries/` (`ticket_key`, `save_as`). | The first live run had to write "no saved artifact" for two claims, which is rule 1 not being satisfiable. The follow-up run then cited one of them. No tool was added, so the permission lists are unchanged. |
+| 60 | The page remembers for a short time what takes seconds to ask (org list, org kind, set-up checks, Claude Code version). For display only; the guard never reads it. | With the real CLI each of these is a process start of several seconds, and the page asked on every view. |
+| 61 | **Start scripts** for Windows and macOS find Python, create a private `.venv`, install the project into it once, report missing tools and start the page. `scripts/bootstrap.py` is the one step behind them. They install nothing system-wide. | The owner asked for an easy set-up. A private environment leaves the user's Python alone; `SFTI_PYTHON` is passed on so the tool server runs with the Python that has the project. |
+| 62 | **The release zip is built from an explicit list** and refused when `sfti.config.json` is not in its default state. The workflow unpacks it into an empty folder on Windows and macOS and runs its own start script up to the page answering. | Tickets, org memory and audit data describe customer orgs and must never travel in a zip (rule 7). A zip is only "what is needed" if it has been seen to work from nothing. |
+| 63 | `python -m webapp` takes the next free port, and opens a copy that is already running instead of starting a second one. | Two pages on the same tickets folder would start two investigations of one ticket. |
+| 64 | **Org memory: one writer at a time** (a per-org lock file), and the double check asks the org before taking the lock. Recall also lists earlier tickets on the same components with what each concluded. | The tool server and the page are separate programs writing one file: whichever saved last undid the other. Earlier conclusions are a lead, and labelled as one. |
+| 65 | **The tests may not touch `tickets/`, `knowledge/` or `audit/` of the checkout.** A check over the whole run fails it otherwise. | During this work the stand-in for Claude Code wrote its report into the current folder when the page asked for its version, and overwrote the report of the live run. The report was restored from the session's record and shown identical by re-exporting it. The stand-in was fixed and the check added, so that a user's real tickets cannot be damaged by running the suite. |
+| 66 | The demo video and the step-by-step screenshots are recorded by a script from the running page, on the simulated orgs, with a real investigation. The video is not part of the release zip. | The owner asked for them. Recording from the real page keeps them true to what a user sees; the zip stays small. |
+| 67 | In an answer of the page's server, `ok` only says whether the request worked; the set-up check reports `ready`. | Found while recording the video on a computer without the Salesforce CLI: the page showed "Something went wrong" where the checks and the install command belong. The check's own "not everything is installed" flag had the same name as the envelope's, so it only failed when a required tool was missing, which is exactly when a newcomer needs that page. |
+| 68 | Progress lines show paths inside the project without their prefix, and reading one of the project's own step descriptions is called that. | The prefix is long and contains the name of the user's home folder, which does not belong on a screen that is being shown to others. |
+
+Done since: a complete AI investigation started from the page was run (see the README, "The web
+interface and the org memory", under what was verified).
 
 ## Open points for the owner
 
-00. **First run from the web page.** Run `claude` once in the project folder and accept the trust
-   question. Then `python -m webapp --demo`, **Try the sample ticket**, **Investigate with Claude
-   Code**, and compare the result with `samples/DEMO-101/expected/`. This is the one path that
-   has only been tested with a stand-in for Claude Code.
+00. **First run on your computer.** Double-click `start-demo.bat` or `start-demo.command`, then
+   **Try the sample ticket** and **Investigate with Claude Code**. A real investigation from the
+   page has now been run (decision 55), but on Linux and on the simulated orgs: your first run on
+   Windows or macOS, and the first on a real org, are still firsts. Compare with
+   `samples/DEMO-101/live-run/`.
 
 0. **The guard is on, and it applies to the assistant in this folder.** It can no longer edit
    `sfti.config.json`, `.mcp.json`, `.claude/settings.json` or `.claude/hooks/`; you can. If you

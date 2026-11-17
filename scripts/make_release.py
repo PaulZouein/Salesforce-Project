@@ -29,7 +29,8 @@ INCLUDE = (
 EXCLUDED_DIRECTORIES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", "venv", "state", "tickets",
                                   "knowledge", "audit", "dist", "build", "node_modules", ".sf", ".sfdx"})
 EXCLUDED_FILES = frozenset({".DS_Store", "settings.local.json", "Thumbs.db"})
-EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".egg-info", ".log.tmp")
+#: Not shipped: leftovers, and the demo video (it is linked from the README; the zip stays small).
+EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".egg-info", ".log.tmp", ".mp4", ".webm")
 #: Files that must be present, or the release is useless.
 REQUIRED = ("QUICKSTART.md", "pyproject.toml", "CLAUDE.md", ".mcp.json", "sfti.config.json", "start.bat",
             "start.command", "scripts/bootstrap.py", "webapp/static/index.html", "mcp_server/server.py",

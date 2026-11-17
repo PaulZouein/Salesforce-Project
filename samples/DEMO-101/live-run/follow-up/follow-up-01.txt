@@ -1,0 +1,3 @@
+Added by the user on 2026-11-16T19:16:11Z
+
+Answers to your open questions. (1) The integration developer confirms that the import sends cases in case-number order inside a batch, and that the 10 November import was one batch of four cases, 00001001 to 00001004. (2) Yes: plan a one-time data correction for the wrong cases; the support team lead approves it once the fix is deployed. (3) No deployment record or version history is available for the 9 November change.

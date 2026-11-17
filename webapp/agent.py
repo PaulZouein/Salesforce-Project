@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -157,6 +158,24 @@ def _describe_tool(name: str, tool_input: Any) -> dict[str, Any]:
     detail = tool_input.get("file_path") or tool_input.get("skill") or tool_input.get("description") or \
         tool_input.get("pattern") or tool_input.get("command")
     return {"kind": "tool", "tool": name, "label": label, "detail": (str(detail)[:220] if detail else None)}
+
+
+_SKILL_FILE_RE = re.compile(r"(?:^|[\\/])\.claude[\\/]skills[\\/]([\w-]+)[\\/]SKILL\.md$")
+
+
+def tidy_event(event: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Make a progress line readable: paths inside the project lose the long prefix (which also names
+    the user's home folder), and reading one of the project's own step descriptions is called that."""
+    detail = event.get("detail")
+    if event.get("kind") != "tool" or not isinstance(detail, str):
+        return event
+    for prefix in {str(root), root.as_posix()}:
+        for separator in ("/", "\\"):
+            detail = detail.replace(prefix + separator, "")
+    skill = _SKILL_FILE_RE.search(detail)
+    if skill and event.get("tool") == "Read":
+        return {**event, "label": "Reading how to do this step", "detail": skill.group(1).replace("-", " ")}
+    return {**event, "detail": detail}
 
 
 def events_from_stream_line(line: str) -> list[dict[str, Any]]:
@@ -431,7 +450,7 @@ class Runner:
                     fatal = event.pop("fatal", False)
                     if event["kind"] == "done":
                         finished_ok = True
-                    run.add(event)
+                    run.add(tidy_event(event, self.root))
                     if fatal:
                         # Without its tools the investigator could only guess. Stop instead.
                         run.status = "failed"

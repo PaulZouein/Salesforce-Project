@@ -13,6 +13,9 @@ What follows is the plan as it was agreed, kept for reference. Where the build d
 - The "to verify" marks on CLI commands are resolved: see the tables in the README for what was
   verified against the installed CLI and what has still not been verified against a live org.
 - Sections 2 and 9 describe the situation before the build; the open questions were answered.
+- Added after the plan: a local web page (decisions 47 to 50, 55 to 57), an org memory that is
+  double-checked against the org (44 to 46, 64), one-click start scripts and a release zip
+  (61, 62), and a recorded walk-through ([`WALKTHROUGH.md`](WALKTHROUGH.md)).
 
 ## 1. My understanding
 

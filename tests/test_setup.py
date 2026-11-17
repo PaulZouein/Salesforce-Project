@@ -284,3 +284,30 @@ def test_quick_start_names_only_things_that_exist():
                   "New ticket", "Get started", "Org memory", "Root cause", "Ticket comment", "Evidence"):
         assert label in text and label in page, label
     assert len(text.splitlines()) < 130       # one page
+
+
+def test_walk_through_shows_every_step_with_a_picture_that_exists():
+    import re
+
+    text = (ROOT / "docs" / "WALKTHROUGH.md").read_text(encoding="utf-8")
+    pictures = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
+    assert len(pictures) == 16 and len(set(pictures)) == 16
+    for picture in pictures:
+        assert (ROOT / "docs" / picture).is_file(), picture
+    assert [int(p.split("/")[-1][:2]) for p in pictures] == list(range(1, 17))      # in order, none skipped
+    video = re.search(r"\]\((demo/[^)]+\.mp4)\)", text)
+    assert video and (ROOT / "docs" / video.group(1)).is_file()
+    assert 500_000 < (ROOT / "docs" / video.group(1)).stat().st_size < 12_000_000
+    # The README's own pictures and links to the two guides exist too.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for target in re.findall(r"\]\(((?:docs/|QUICKSTART)[^)#]+)\)", readme):
+        assert (ROOT / target).is_file(), target
+
+
+def test_release_carries_the_guides_but_not_the_video(tmp_path):
+    archive = make_release.build(out_dir=tmp_path)
+    with zipfile.ZipFile(archive) as zipped:
+        names = {name.split("/", 1)[1] for name in zipped.namelist()}
+    assert "docs/WALKTHROUGH.md" in names and "docs/images/steps/01-get-started.png" in names
+    assert "samples/DEMO-101/live-run/first-run/report.md" in names
+    assert not [name for name in names if name.endswith((".mp4", ".webm"))]

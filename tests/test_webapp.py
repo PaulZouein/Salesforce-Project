@@ -109,7 +109,7 @@ def test_status_and_prerequisites(web):
     _, pre = web.get("/api/prereqs")
     names = [c["name"] for c in pre["checks"]]
     assert names[:4] == ["Python", "git", "Salesforce CLI (sf)", "mcp Python package"] and "Claude Code" in names
-    assert pre["ok"] is True and pre["os"] in ("windows", "macos", "linux")
+    assert pre["ok"] is True and pre["ready"] is True and pre["os"] in ("windows", "macos", "linux")
     assert "simulated" in next(c for c in pre["checks"] if c["name"].startswith("Salesforce CLI"))["detail"]
 
 
@@ -121,7 +121,28 @@ def test_missing_tools_come_with_exact_fix_commands(project, tmp_path, monkeypat
     assert cli["ok"] is False and cli["fix"][0] == "npm install --global @salesforce/cli"
     claude = next(c for c in pre["checks"] if c["name"] == "Claude Code")
     assert claude["ok"] is False and claude["required"] is False and "claude-code" in claude["fix"][0]
-    assert pre["ok"] is False
+    assert pre["ready"] is False
+
+
+def test_a_missing_tool_is_an_answer_not_a_failed_request(web, tmp_path, monkeypatch):
+    """On a computer without the Salesforce CLI the page must still get the checks, with what to install.
+    (The answer used to carry its own "ok": false, which the page read as "the request failed".)"""
+    web.post("/api/demo", {"enabled": False})
+    monkeypatch.setenv("SFTI_SF_EXECUTABLE", str(tmp_path / "no-cli-here"))
+    web.app._inv = None
+    status, pre = web.get("/api/prereqs?refresh=1")
+    assert status == 200 and pre["ok"] is True and pre["ready"] is False
+    cli = next(c for c in pre["checks"] if c["name"].startswith("Salesforce CLI"))
+    assert cli["ok"] is False and cli["fix"][0] == "npm install --global @salesforce/cli"
+    # The org list, which does need the CLI, is the request that fails, and it says why.
+    status, orgs = web.get("/api/orgs?refresh=1")
+    assert status == 502 and orgs["ok"] is False and "Salesforce CLI" in orgs["error"]["message"]
+
+
+def test_no_view_can_make_a_request_that_worked_look_failed(web):
+    for path in ("/api/status", "/api/prereqs", "/api/orgs", "/api/sample", "/api/memory", "/api/tickets"):
+        status, data = web.get(path)
+        assert status == 200 and data["ok"] is True, path
 
 
 def test_orgs_are_listed_and_classified_without_secrets(web):
@@ -754,6 +775,29 @@ def test_org_memory_can_be_searched_from_the_page(web):
     assert status == 200 and nothing["notes"] == [] and nothing["components"] == []
     status, empty = web.get(f"/api/memory/{org_id}/search?q=")
     assert status == 400 and "few words" in empty["error"]["message"]
+
+
+def test_progress_lines_show_paths_inside_the_project_without_the_long_prefix(tmp_path):
+    root = tmp_path / "Users" / "someone" / "investigator"
+
+    def line(tool, **tool_input):
+        event = agent.events_from_stream_line(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": tool, "input": tool_input}]}}))[0]
+        return agent.tidy_event(event, root)
+
+    written = line("Write", file_path=str(root / "tickets" / "ABC-1" / "report.md"))
+    assert written["detail"].replace("\\", "/") == "tickets/ABC-1/report.md" and "someone" not in written["detail"]
+    skill = line("Read", file_path=str(root / ".claude" / "skills" / "investigate-ticket" / "SKILL.md"))
+    assert (skill["label"], skill["detail"]) == ("Reading how to do this step", "investigate ticket")
+    windows = agent.tidy_event({"kind": "tool", "tool": "Read", "label": "Reading a file",
+                                "detail": str(root) + "\\tickets\\ABC-1\\ticket.md"}, root)
+    assert windows["detail"] == "tickets\\ABC-1\\ticket.md"
+    elsewhere = line("Read", file_path="/somewhere/else/notes.txt")
+    assert elsewhere["detail"] == "/somewhere/else/notes.txt"
+    query = line("mcp__sf-investigator__soql_query", query="SELECT Id FROM Case")
+    assert query["detail"] == "SELECT Id FROM Case"
+    note = agent.tidy_event({"kind": "note", "label": f"I read {root}/x"}, root)
+    assert note == {"kind": "note", "label": f"I read {root}/x"}
 
 
 def test_tool_labels_cover_every_tool_of_the_server():

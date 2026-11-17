@@ -197,7 +197,9 @@ class App:
         for check in checks:
             if not check["ok"] and check["name"] in FIXES:
                 check["fix"] = FIXES[check["name"]][system]
-        return {"os": system, "ok": all(c["ok"] for c in checks if c["required"]), "checks": checks, "demo": self.demo}
+        # "ready", not "ok": in an answer of this server "ok" says whether the request itself worked.
+        return {"os": system, "ready": all(c["ok"] for c in checks if c["required"]), "checks": checks,
+                "demo": self.demo}
 
     def orgs(self, *, refresh: bool = False) -> dict[str, Any]:
         def ask() -> dict[str, Any]:
@@ -351,7 +353,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
 
         def _guarded(self, action: Any) -> None:
             try:
-                self._json({"ok": True, **action()})
+                # "ok" is set last: nothing a view returns can make a request that worked look failed.
+                self._json({**action(), "ok": True})
             except (InputValidationError, WorkspaceError) as exc:
                 self._json({"ok": False, "error": exc.to_dict()}, HTTPStatus.BAD_REQUEST)
             except SfInvestigatorError as exc:

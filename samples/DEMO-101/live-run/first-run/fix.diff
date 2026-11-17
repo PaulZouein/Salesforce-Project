@@ -1,0 +1,41 @@
+--- a/force-app/main/default/classes/CaseEscalationService.cls
++++ b/force-app/main/default/classes/CaseEscalationService.cls
+@@ -27,7 +27,7 @@
+             Account account = accountsById.get(c.AccountId);
+             if (account == null || account.Support_Tier__c != PREMIUM_TIER) {
+                 // Not a premium customer: nothing to do.
+-                return;
++                continue;
+             }
+             c.Priority = HIGH_PRIORITY;
+         }
+
+--- a/force-app/main/default/classes/CaseEscalationServiceTest.cls
++++ b/force-app/main/default/classes/CaseEscalationServiceTest.cls
+@@ -32,4 +32,26 @@
+         c = [SELECT Priority FROM Case WHERE Id = :c.Id];
+         System.assertEquals('Medium', c.Priority, 'A case for a Standard account keeps its priority');
+     }
++
++    @isTest
++    static void premiumCasesAfterStandardCaseInSameBatchAreHighPriority() {
++        Account standard = createAccount('Standard Test Account', 'Standard');
++        Account premium = createAccount('Premium Test Account', 'Premium');
++
++        // The Standard case comes first: it must not stop the Premium cases after it.
++        List<Case> batch = new List<Case>{
++            new Case(Subject = 'Standard case', AccountId = standard.Id, Priority = 'Medium'),
++            new Case(Subject = 'Premium case 1', AccountId = premium.Id, Priority = 'Medium'),
++            new Case(Subject = 'Premium case 2', AccountId = premium.Id, Priority = 'Medium')
++        };
++
++        Test.startTest();
++        insert batch;
++        Test.stopTest();
++
++        Map<Id, Case> saved = new Map<Id, Case>([SELECT Id, Priority FROM Case WHERE Id IN :batch]);
++        System.assertEquals('Medium', saved.get(batch[0].Id).Priority);
++        System.assertEquals('High', saved.get(batch[1].Id).Priority);
++        System.assertEquals('High', saved.get(batch[2].Id).Priority);
++    }
+ }

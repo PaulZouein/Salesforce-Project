@@ -10,15 +10,16 @@ Production orgs are read-only. That is enforced in code and has no override.
 Supported systems: **Windows and macOS.** Linux is not a supported system: it happens to work
 (the tool was built on it) but is no longer tested in CI.
 
-**The quickest way to see it:** after installing (three commands, below), run
+**The quickest way to see it:** double-click `start-demo.bat` (Windows) or `start-demo.command`
+(macOS). The first time it sets itself up (it needs Python 3.11 or newer and an internet
+connection); then a page opens in your browser. It checks your set-up, lets you paste a ticket,
+shows the investigation as it happens and then the result. The demo uses simulated orgs with a
+planted bug, so you need no Salesforce account to try it.
 
-```
-python -m webapp --demo
-```
-
-A page opens in your browser. It checks your set-up, lets you paste a ticket, shows the
-investigation as it happens and then the result. `--demo` uses simulated orgs with a planted
-bug, so you need no Salesforce account to try it.
+- [`QUICKSTART.md`](QUICKSTART.md): one page, from nothing to a first result.
+- [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md): every step with a screenshot, and a short
+  [demo video](docs/demo/ticket-investigator-demo.mp4).
+- From a terminal the same is `python -m webapp --demo`, after installing (three commands, below).
 
 ![The result page: root cause, evidence check, tabs for the fix, the report and the comment](docs/images/web-result.png)
 
@@ -73,15 +74,19 @@ python -m webapp --demo     # simulated demo orgs, no Salesforce account needed
 python -m webapp --port 9000 --no-browser
 ```
 
-It opens `http://127.0.0.1:8765/`. Stop it with Ctrl+C.
+It opens `http://127.0.0.1:8765/`, or the next free port when another program uses that one (the
+address is printed). Starting it a second time opens the copy that is already running instead of
+a second one on the same tickets. Stop it with Ctrl+C. The `start` scripts do the same after
+setting up a private Python environment in `.venv`; `claude-here.bat` / `claude-here.command`
+open Claude Code in the folder with the investigator's tools, for working in the terminal.
 
 | Page | What you do there |
 |---|---|
 | **Get started** | Four steps. It checks Python, git, the Salesforce CLI and Claude Code and, for anything missing, shows the command that installs it on your system. It lists your connected orgs with what each one is (production, sandbox…). To connect one, you type a name, pick the kind of org, and copy the exact `sf org login web …` command it builds. |
-| **New ticket** | Paste the ticket as it is, comments included. The key is found in the text. Choose the org where the problem happens and, if you have one, a sandbox for tests. |
-| **The ticket page** | Start the investigation and watch it: each step in plain words ("Querying records", "Reading source", "Checking the report's evidence"). Then the result: the root cause and whether it is confirmed, the evidence check, and tabs for the cause with its evidence chain, the fix as a diff with the test plan, the full report, the draft comment with a copy button, the saved evidence files, and the ticket as it was read. |
+| **New ticket** | Paste the ticket as it is, comments included. The key is found in the text. Choose the org where the problem happens, a sandbox for tests if you have one, and the model. |
+| **The ticket page** | Start the investigation and watch it: each step in plain words ("Querying records", "Reading source", "Checking the report's evidence"). Then the result: the root cause and whether it is confirmed, the evidence check, and tabs for the cause with its evidence chain, the fix as a diff with the test plan, the full report, the draft comment with a copy button, the saved evidence files, and the ticket as it was read. The investigator's open questions are shown at the top; **Add information** takes your answer, a correction or a file and runs again from what was found; **Download the result** gives the report, the comment and the fix as one zip. |
 | **Tickets** | Everything investigated on this computer, with status and root-cause state. |
-| **Org memory** | What has been learned about each org, and a button to check it against the org. See below. |
+| **Org memory** | What has been learned about each org, a search box that asks it what the investigator would ask, and a button to check it against the org. See below. |
 
 ![Get started: set-up checks and connected orgs](docs/images/web-get-started.png)
 
@@ -91,22 +96,45 @@ The investigation itself is done by Claude Code. The page has three ways to get 
 
 1. **Investigate with Claude Code.** The page starts Claude Code in the project folder without a
    terminal (`claude -p`, with the ticket's instructions on standard input) and shows its
-   progress. It uses your Claude Code sign-in and usage. A typical ticket takes a few minutes.
+   progress. It uses your Claude Code sign-in and usage. The sample ticket took two minutes with
+   Sonnet; a real ticket on a real org takes longer.
 2. **Run it yourself.** The page shows one prompt to paste into Claude Code. The result appears
    on the page as the files are written, because the page reads the ticket's folder.
 3. **Replay the recorded sample** (demo orgs, sample ticket only). Shows a complete result in
    seconds without the AI: the real tools gather the evidence from the simulated org, and the
    written analysis is the stored sample. The page labels it as a recorded sample.
 
-**Do this once before using option 1:** open a terminal in the project folder, run `claude`, sign
-in if asked, and answer yes when it asks whether you trust the folder. Until a folder is trusted,
-Claude Code ignores the project's permission list when it runs without a terminal, and the
-investigator's tools would all be refused. The page detects this and tells you.
+**What Claude Code is given when the page starts it.** The page spells it out on the command
+line, so it does not depend on how Claude Code is set up on your computer, and the folder does
+not have to be opened in Claude Code first. You only need to be signed in (`claude` once in a
+terminal).
 
-**From the page the investigator only advises.** Started this way, nobody is there to approve
-anything, so every tool that changes an org is refused, whatever the mode in `sfti.config.json`.
-You get the fix as a diff. To have it deployed to a sandbox and tested, use Claude Code itself in
-`apply` mode, where each write asks you.
+- Only this project's own tool server (`sf-investigator`) is attached. Connectors you use in
+  Claude Code for other things are not available to the investigation.
+- The read-only investigator tools are allowed by name, taken from the server's own list.
+- The six tools that change an org are removed, together with the shell and web access.
+- It may write files, which it needs for the ticket's folder. The project's rules still refuse
+  edits to the safety files.
+
+**From the page the investigator only advises**, whatever the mode in `sfti.config.json`. You get
+the fix as a diff. To have it deployed to a sandbox and tested, use Claude Code itself in `apply`
+mode (`claude-here`), where each write asks you.
+
+**Choose the model** next to the Investigate button: Claude Code's default, Sonnet (quicker,
+uses less of your Claude usage) or Opus. `SFTI_CLAUDE_MODEL` sets the default for every ticket.
+
+**Add information and run again.** An investigation nobody watches cannot ask you anything, so
+what it would have asked comes back as *Open questions*, shown at the top of the result. Write
+your answer, a correction or a record Id under **Add information**, attach a screenshot or an
+exported log (text, CSV, JSON, XML, images, PDF; 5 MB each), and press *Investigate again*. Notes
+and files are saved in the ticket's `attachments/` folder. The next run reads them and continues
+from what is already there instead of starting again: in the recorded follow-up of the sample it
+re-queried what the answer changed, cited the answer as what the user said, dropped the
+hypothesis it settled and kept the one it did not.
+
+![Add information: a note or a file for the next run](docs/images/web-add-information.png)
+
+A run that ends without writing a report is shown as *Stopped before the report*, not as done.
 
 ![Progress while the investigation runs](docs/images/web-progress.png)
 
@@ -119,6 +147,12 @@ You get the fix as a diff. To have it deployed to a sandbox and tested, use Clau
   and deletes ticket folders on your disk, and starts investigations. A test scans its code for
   any reference to the write functions.
 - It posts nothing to your ticket system. The comment tab is a draft with a copy button.
+- **Download the result** contains the report (Markdown and printable HTML), the comment, the fix
+  and the ticket summary. The saved evidence, the retrieved source and the pasted ticket stay in
+  the ticket's folder.
+- It remembers for a moment what takes seconds to ask (the org list, what kind of org each one
+  is, the set-up checks). That is for display only: before every write the guard asks the org
+  itself. *Check again* and *I have connected it* ask afresh.
 - Pasted ticket text is stored as you pasted it in `tickets/<KEY>/attachments/`, on your disk
   only. The structured `ticket.md`, the report and the comment are written without personal data.
 
@@ -151,11 +185,19 @@ goes to them first instead of rediscovering the org.
 - **Memory is a lead, never evidence.** A report may only cite what was read from the org during
   that investigation. The memory decides where to look first; it never appears as proof.
 
+**Earlier tickets.** A recall also lists the earlier tickets that touched the same components,
+with the status and the first paragraph of what each concluded. It is a lead like the rest: a
+similar symptom can have a different cause.
+
+**Two programs, one memory.** The tool server and the web page both write the memory file. Each
+change takes a per-org lock, reads, changes, saves and releases, so neither undoes what the
+other learned. A lock left by a crashed program is taken over after a minute.
+
 **What it does not hold:** no record data, no personal data (a note containing an email address
 is refused), no conclusions about individual tickets. It is keyed by org Id, not by alias, so
 re-pointing an alias does not mix two orgs. The folder is never committed or uploaded.
 
-The **Org memory** page shows all of it, with a "Check against the org" button. In Claude Code
+The **Org memory** page shows all of it, with a search box and a "Check against the org" button. In Claude Code
 the tools are `recall_org_knowledge`, `org_map`, `verify_org_knowledge`, `remember_org_fact` and
 `forget_org_fact`.
 
@@ -448,10 +490,10 @@ Read-only tools run without a prompt. Paths in results are relative to `tickets/
 | `list_files`, `search_metadata`, `read_file` | List, regex-search and read what was retrieved, with line numbers |
 | `summarize_flow` | Outline of a Flow: trigger, entry conditions, decisions, record operations, order |
 | `scan_apex` | Bug-prone patterns in retrieved Apex. Leads, not findings |
-| `describe_object` | Fields, record types, child relationships, and the automation on an object |
+| `describe_object` | Fields, record types, child relationships, and the automation on an object. With `ticket_key` the answer is saved as evidence |
 | `soql_query`, `tooling_query` | `SELECT` with enforced limits and redaction; saved as evidence when given a `ticket_key` |
-| `find_dependencies` | What uses a component and what it uses. An empty list means "none recorded" |
-| `recent_org_changes`, `record_history` | Setup audit trail and modified code in a time window; field history of one record |
+| `find_dependencies` | What uses a component and what it uses. An empty list means "none recorded". With `ticket_key` the answer is saved as evidence |
+| `recent_org_changes`, `record_history` | Setup audit trail and modified code in a time window; field history of one record. With `ticket_key` the answer is saved as evidence |
 | `list_debug_logs`, `get_debug_log`, `analyze_debug_log` | Logs: list, download with an excerpt, and analyze (code units, executed source lines, flow decisions, DML, SOQL, limits) |
 | `run_apex_tests` | Run test classes on a non-production org |
 | `workspace_diff` | Local edits as a unified diff against the org's version; saved to `fix.diff` |
@@ -589,15 +631,23 @@ path.
 - The page was driven in a real browser (Chromium, desktop and phone width) through the whole
   demo flow: set-up checks, sample ticket, replay, result tabs, org memory and its check. No page
   errors. Its server is covered by tests, including the refusals (foreign host, missing token).
-- Starting Claude Code the way the page does was tried once in the build container with a
-  one-line prompt: it started, the project's MCP server connected with all 42 tools, and the
-  progress stream was read correctly. That call is also how the "folder not trusted" requirement
-  was found.
-- **Not done:** a complete AI investigation started from the page. The build container's folder
-  is not trusted by Claude Code for unattended runs, and changing that is not something the
-  build session should do. In the tests, Claude Code is replaced by a stand-in that speaks the
-  same protocol. The first real run from the page will be yours: use the sample ticket on the
-  demo orgs, and compare with `samples/DEMO-101/expected/`.
+- **A complete AI investigation started from the page was run**, four times, in the build
+  container, on the simulated orgs with the sample ticket and Sonnet: a first run (2 minutes,
+  root cause confirmed, 14 citations verified, fix as a diff with a new test, draft comment,
+  three facts saved to the org memory), a follow-up after answering its open questions through
+  **Add information** (1 minute, 18 citations), and two recordings for the demo video (the
+  published one took a minute and a half; the first was discarded after it showed the two
+  defects fixed in decisions 67 and 68). All four confirmed the same root cause. The folder had
+  never been opened in Claude Code. The unedited output of the first two is in
+  `samples/DEMO-101/live-run/`. In the tests Claude Code is still replaced by a stand-in that
+  speaks the same protocol.
+- **The start scripts and the release zip:** on every push the workflow builds the zip on Windows
+  and macOS machines, unpacks it into an empty folder and runs its own start script up to the
+  page answering on the simulated orgs. **Not verified:** the double-click itself, and the
+  warning Windows and macOS show for a downloaded script (the two notes in `QUICKSTART.md` come
+  from the systems' documentation); a company proxy that blocks `pypi.org`.
+- **Not verified:** an investigation started from the page on a real org, and on Windows or
+  macOS (the three runs were on Linux). Time and usage will differ there.
 - The org memory's change check was exercised against the simulator only. On a real org it
   depends on `LastModifiedDate` of `ApexClass`, `ApexTrigger` and `Flow` through the Tooling API.
 
@@ -654,9 +704,11 @@ of them reports an error for a section, that is one of the items above.
 | A hook error is shown on every tool call | `python` (or `SFTI_PYTHON`) does not run in the shell Claude Code uses for hooks. Set `SFTI_PYTHON` to the full path of your interpreter and restart Claude Code. The error does not block the call. |
 | Every tool call is blocked right after pulling | The hook cannot lock a session by design. If it happens, check that `.claude/hooks/guard.py` exists and that `python` (or `SFTI_PYTHON`) runs; then report it. To get out, run `python scripts/generate_settings.py --no-guard` in your own terminal. |
 | You want to start a ticket again | Delete `tickets/<KEY>/` yourself, or use **Delete** on the ticket's page. |
-| The page says "Claude Code has not been used in this folder yet" | Run `claude` once in a terminal in the project folder and accept the question about trusting the folder. Without that, Claude Code ignores the project's permission list when the page starts it. |
-| The page says "The sf-investigator tools did not start" | Same cause as a failed server in `/mcp`: see the first row. The page starts Claude Code with the Python that runs the page, so start the page from the project's virtual environment. |
-| `python -m webapp` says it could not listen | Another program uses port 8765. Use `--port 9000`. |
+| The investigation stops with a sign-in message | Run `claude` once in a terminal and sign in. |
+| The ticket shows "Stopped before the report" | Claude Code ended without writing one. Open **Activity** for its last message, add what it was missing under **Add information**, and start it again: it continues from what it gathered. |
+| The page says "The sf-investigator tools did not start" | Same cause as a failed server in `/mcp`: see the first row. The page starts Claude Code with the Python that runs the page, so start the page with the `start` script, or from the project's virtual environment. |
+| `python -m webapp` says it could not listen | Ports 8765 to 8774 are all used by other programs. Use `--port 9000`. |
+| The start script says the installation did not finish | No internet connection, or a network that blocks `pypi.org`. Fix that and start again. |
 | The page shows a result but the status stays "In progress" | The report or the comment is not written yet. If Claude Code stopped, open the ticket's **Activity** tab for the last step, then start again. |
 | The org memory looks wrong | Press **Check against the org** on the Org memory page. To start over for one org, delete its file in `knowledge/`. |
 
@@ -714,7 +766,16 @@ python -m pytest
 No org, no Salesforce CLI, no Claude Code and no network are needed. Integration tests start the
 simulator's `sf` launcher exactly as the wrapper would start the real CLI; the web interface is
 tested through a real HTTP server on a free local port, with a stand-in for Claude Code. `.github/workflows/tests.yml` runs the
-suite on Windows and macOS.
+suite on Windows and macOS, then builds the release zip and has it set itself up from an empty
+folder (`python scripts/check_release.py`).
+
+The suite works in temporary folders only. A check that spans the whole run fails it if a file
+in `tickets/`, `knowledge/` or `audit/` of the checkout changed, so running the tests next to
+your real tickets is safe.
+
+To build the zip to hand to someone: `python scripts/make_release.py` writes
+`dist/salesforce-ticket-investigator-<version>.zip`. It is built from an explicit list, never
+from "everything in the folder", and is refused if `sfti.config.json` is not in its default state.
 
 After adding or renaming a tool in `mcp_server/server.py`, regenerate the permission lists, which
 are built from the server's own tool lists:

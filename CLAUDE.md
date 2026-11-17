@@ -68,6 +68,9 @@ asks the org whether each remembered component changed since it was learned.
 
 - **Memory is a lead, never evidence.** It tells you where to look first. A report cites only
   what you read from the org during this investigation, never the memory.
+- `recall_org_knowledge` also lists earlier tickets that touched the same components, with what
+  each concluded (pass `ticket_key` to leave out the current one). A similar symptom can have a
+  different cause: treat it like the rest of the memory.
 - Anything recalled as `changed`, `stale`, `not_found_in_org` or `not_checked` is read again
   before you rely on it. `retrieve_components` tells you when a component differs from what was
   remembered.
@@ -77,10 +80,15 @@ asks the org whether each remembered component changed since it was learned.
 
 ## The web page
 
-`python -m webapp` is a local page for the same work: set-up checks, a form for the ticket,
-progress, results and the org memory. Tickets submitted there are in `tickets/<KEY>/` with the
-original text in `attachments/ticket-original.txt`. When the page starts you unattended, nobody
-can approve anything: stay in advise mode and do not attempt write tools.
+`python -m webapp` (or the `start` scripts) is a local page for the same work: set-up checks, a
+form for the ticket, progress, results and the org memory. Tickets submitted there are in
+`tickets/<KEY>/` with the original text in `attachments/ticket-original.txt`. Files named
+`attachments/follow-up-NN.txt` are what the user added after an earlier run (an answer to an open
+question, a correction): they are part of the ticket, and the newest wins where they disagree.
+When the page starts you unattended, nobody can approve anything: you have the read-only tools
+only, so stay in advise mode, ask nothing, and list what you would have asked under Open
+questions in the report. A ticket that was already worked on is continued from its folder
+(`evidence_index` shows what is there), not started again.
 
 ## Workspace
 
@@ -159,6 +167,9 @@ with what is allowed.
 - `soql_query` redacts personal-data fields. Use `reveal_fields` only when the value itself is
   the subject of the bug, and never copy it into a report.
 - `find_dependencies` and `scan_apex` give leads. An empty dependency list means "none recorded".
+- `describe_object`, `find_dependencies`, `recent_org_changes` and `record_history` take
+  `ticket_key` like `soql_query` does: the answer is saved under `queries/` and can be cited. An
+  answer that was only seen in the conversation cannot be cited; say so if you rely on one.
 - `search_metadata` only sees what was retrieved. If a search is empty, ask whether the component
   was retrieved before concluding it does not exist.
 - No debug log, no field history, or an empty query is absence of evidence. Say so.
