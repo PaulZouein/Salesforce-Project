@@ -703,8 +703,8 @@ The error envelope (`name`, `message`, `exitCode`, `status`, `stack`) was captur
 
 ### Verified by the test suite
 
-The suite runs in GitHub Actions on Windows and macOS (Python 3.11 and 3.13), and ran on Linux in
-the build container. One test is an expected failure: the hook's documented false positive. It covers the CLI wrapper, the guard,
+The suite runs in GitHub Actions on every push on Windows (Python 3.11) and macOS (Python 3.13),
+on all four combinations when the workflow is run by hand, and on Linux in the build container. One test is an expected failure: the hook's documented false positive. It covers the CLI wrapper, the guard,
 queries and redaction, metadata, logs, tests, the whole write path, the report checks, the MCP
 server over stdio and the hook. It runs against the **simulator**, through the real subprocess
 path.

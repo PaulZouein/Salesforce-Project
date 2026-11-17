@@ -1,12 +1,23 @@
 name: tests
 
 # The suite needs no Salesforce org and no Salesforce CLI: it runs against the simulated org in simulator/.
+#
+# Each push runs two jobs: Windows on Python 3.11 and macOS on Python 3.13, so both supported systems and
+# both Python versions are covered. On a private repository macOS minutes count ten times and Windows
+# minutes twice against the monthly allowance; all four combinations cost about 126 minutes a push.
+# "Run workflow" (by hand, in the Actions tab) runs all four, for example before a release.
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  # A newer push to the same branch replaces a run that is still going.
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
@@ -14,9 +25,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]  # the supported systems
-        python: ["3.11", "3.13"]
+      matrix: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '{"os":["windows-latest","macos-latest"],"python":["3.11","3.13"]}' || '{"include":[{"os":"windows-latest","python":"3.11"},{"os":"macos-latest","python":"3.13"}]}') }}
     env:
       PYTHONUTF8: "1"
     steps:
