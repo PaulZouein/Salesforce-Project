@@ -21,16 +21,17 @@ FOLDER_NAME = "salesforce-ticket-investigator"
 
 #: Top-level files and folders that make up a release.
 INCLUDE = (
-    "QUICKSTART.md", "README.md", "CLAUDE.md", "pyproject.toml", "sfti.config.json", ".mcp.json",
+    "QUICKSTART.md", "README.md", "SECURITY.md", "CLAUDE.md", "pyproject.toml", "sfti.config.json", ".mcp.json",
     "start.bat", "start-demo.bat", "claude-here.bat", "start.command", "start-demo.command", "claude-here.command",
     ".claude", "core", "mcp_server", "simulator", "webapp", "samples", "scripts", "docs",
 )
 #: Never shipped, wherever they are.
 EXCLUDED_DIRECTORIES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", "venv", "state", "tickets",
-                                  "knowledge", "audit", "usage", "live-check", "dist", "build", "node_modules", ".sf", ".sfdx"})
+                                  "knowledge", "audit", "usage", "live-check", "dist", "build", "node_modules", ".sf", ".sfdx",
+                                  "worktrees"})  # .claude/worktrees: copies of the project made by Claude Code's agents
 EXCLUDED_FILES = frozenset({".DS_Store", "settings.local.json", "Thumbs.db"})
-#: Not shipped: leftovers, and the demo video (it is linked from the README; the zip stays small).
-EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".egg-info", ".log.tmp", ".mp4", ".webm")
+#: Not shipped: leftovers, and the demo videos and animation (linked from the README; the zip stays small).
+EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".egg-info", ".log.tmp", ".mp4", ".webm", ".gif")
 #: Files that must be present, or the release is useless.
 REQUIRED = ("QUICKSTART.md", "pyproject.toml", "CLAUDE.md", ".mcp.json", "sfti.config.json", "start.bat",
             "start.command", "scripts/bootstrap.py", "webapp/static/index.html", "mcp_server/server.py",

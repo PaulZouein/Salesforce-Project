@@ -26,7 +26,7 @@ in a code block, complete, ready to copy. Say where to run it ("in a terminal, n
 
 If the `sf-investigator` tools are not available at all, say so first: the MCP server did not
 start. Ask them to run `/mcp` and, if it shows the server as failed, to follow "Troubleshooting"
-in the README (usually the project is not installed in the Python that Claude Code uses).
+in `docs/GUIDE.md`, Troubleshooting (usually the project is not installed in the Python that Claude Code uses).
 
 ## Step 2: connect a Salesforce org
 

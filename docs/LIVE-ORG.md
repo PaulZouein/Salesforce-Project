@@ -1,7 +1,7 @@
 # Testing with your Developer Edition org
 
-Everything so far was checked against simulated orgs. Your Developer Edition org can check it
-against the real thing, in one of two ways:
+The investigator has so far been run only against simulated orgs. This guide checks it on a real
+Developer Edition org, in one of two ways:
 
 - **On your own computer**, parts 1 to 5 below. The investigator reaches Salesforce through the
   Salesforce CLI, which logs in through your browser.
@@ -15,7 +15,7 @@ Pick how far you go. Each part is useful on its own.
 
 | Part | Time | What it shows | Changes your org? |
 |---|---|---|---|
-| [1. Connect](#1-connect-the-org-once) | 2 min | | No |
+| [1. Connect](#1-connect-the-org-once) | 2 min | the org connected to the Salesforce CLI | No |
 | [2. Live check](#2-the-live-check-read-only) | 5 min | every read-only tool against a real org | No |
 | [3. Put the sample bug in your org](#3-put-the-sample-bug-in-your-org) | 10 min | the bug, for real: real Apex runs | Yes: adds a field, 3 classes, a trigger, a permission set, 7 records |
 | [4. Investigate it from the page](#4-investigate-it-from-the-page) | 5 min | a whole investigation on a real org | No |
@@ -129,6 +129,8 @@ the records, then roll back. Nothing happens without your approval of each step.
 5. Set the two settings back to `"advise"` and `false`.
 
 ## Letting a cloud session use your org
+
+*Advanced, and only for Claude Code cloud sessions. On your own computer, parts 1 to 5 are all you need.*
 
 A Claude Code cloud session runs in a container with no browser, and its network reaches only
 the hosts its environment allows. The Salesforce CLI 2.158 no longer has a code-based (device)

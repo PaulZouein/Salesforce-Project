@@ -9,6 +9,22 @@ description = "Investigate Salesforce bug tickets with evidence: root cause, sma
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["mcp>=1.10", "pypdf>=4.0"]
+keywords = ["salesforce", "claude-code", "mcp", "debugging", "root-cause-analysis", "apex"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Debuggers",
+]
+
+[project.urls]
+Homepage = "https://github.com/PaulZouein/Salesforce-Project"
+Documentation = "https://github.com/PaulZouein/Salesforce-Project#readme"
+Issues = "https://github.com/PaulZouein/Salesforce-Project/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

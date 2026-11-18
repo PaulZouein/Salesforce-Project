@@ -3,7 +3,7 @@
 Scope, deliberately small:
 
 * Jira Server / Data Center only, through its REST API with a personal access token. For Jira
-  Cloud use Atlassian's own MCP server (see the README).
+  Cloud use Atlassian's own MCP server (see docs/GUIDE.md).
 * One operation: fetch a ticket (fields and comments). There is no function here that creates,
   edits, comments on or transitions a ticket, and the HTTP helper can only send ``GET``.
 * Off by default. It works only when the user has set ``jira_base_url`` in ``sfti.config.json``

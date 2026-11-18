@@ -10,7 +10,7 @@ What follows is the plan as it was agreed, kept for reference. Where the build d
 - Developer Edition orgs are read-only unless enabled (the plan's open question 2); decision 3.
 - The simulated org lives in `simulator/`, not under `tests/`; decision 13.
 - More tools than the plan lists; decisions 14 and 27.
-- The "to verify" marks on CLI commands are resolved: see the tables in the README for what was
+- The "to verify" marks on CLI commands are resolved: see the tables in VERIFICATION.md for what was
   verified against the installed CLI and what has still not been verified against a live org.
 - Sections 2 and 9 describe the situation before the build; the open questions were answered.
 - Added after the plan: a local web page (decisions 47 to 50, 55 to 57), an org memory that is

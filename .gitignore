@@ -26,4 +26,5 @@ dist/
 .DS_Store
 # Local Claude Code overrides
 .claude/settings.local.json
+.claude/worktrees/
 simulator/state/

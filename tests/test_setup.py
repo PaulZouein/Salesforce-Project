@@ -247,6 +247,8 @@ def test_release_never_picks_up_private_folders_even_inside_included_ones(tmp_pa
         ".claude/settings.json": "{}", ".claude/settings.local.json": "{}", "docs/.DS_Store": "",
         "tickets/T-1/report.md": "private", "knowledge/00D.json": "{}", "audit/audit.db": "", "README.md": "readme",
         "notes-to-self.txt": "not listed, so not shipped",
+        # A copy of the project that Claude Code made for an agent, and the README's animation.
+        ".claude/worktrees/agent-1/README.md": "a whole second copy", "docs/demo/teaser.gif": "GIF89a",
     }.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -311,4 +313,5 @@ def test_release_carries_the_guides_but_not_the_video(tmp_path):
         names = {name.split("/", 1)[1] for name in zipped.namelist()}
     assert "docs/WALKTHROUGH.md" in names and "docs/images/steps/01-get-started.png" in names
     assert "samples/DEMO-101/live-run/first-run/report.md" in names
-    assert not [name for name in names if name.endswith((".mp4", ".webm"))]
+    assert not [name for name in names if name.endswith((".mp4", ".webm", ".gif"))]
+    assert "SECURITY.md" in names and not [name for name in names if "/worktrees/" in "/" + name]

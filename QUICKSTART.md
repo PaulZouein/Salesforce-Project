@@ -90,7 +90,7 @@ your computer.
   want a hard limit. Or choose *Sonnet* next to the Investigate button.
 - **Have a Developer Edition org?** `docs/LIVE-ORG.md` tries everything on it, safely.
 - **No browser where the investigator runs** (a remote computer, a cloud session)? *Connect an
-  org* can take an authorization pasted from a computer that has one. See the README.
+  org* can take an authorization pasted from a computer that has one. See `docs/GUIDE.md`.
 - **Stop**: close the small window, or press Ctrl+C in it.
 - **Update**: unzip the new version over the old one and start again. Your `tickets` and
   `knowledge` folders are kept.
@@ -107,4 +107,5 @@ your computer.
 | The investigation stops with a sign-in message | Run `claude` once in a terminal and sign in. |
 | You started it twice | Nothing breaks: the second start opens the copy that is already running. To switch between demo and your own orgs, close the first window. |
 
-More detail, the list of tools, and what has and has not been verified: `README.md`.
+More detail: `README.md`, then the guides in `docs/`: `GUIDE.md` (using it), `SAFETY.md`,
+`REFERENCE.md` (every tool) and `VERIFICATION.md` (what has and has not been verified).

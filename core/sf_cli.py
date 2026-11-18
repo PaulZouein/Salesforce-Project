@@ -9,7 +9,7 @@ Responsibilities:
 * turn CLI failures into typed errors with a clear message.
 
 Flags and JSON shapes were checked against ``@salesforce/cli`` 2.158.7 (``--help`` output and
-the plugin sources). See the README for the list.
+the plugin sources). docs/VERIFICATION.md has the list.
 """
 
 from __future__ import annotations

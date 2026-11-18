@@ -133,7 +133,7 @@ Memory is a lead, never evidence: a report cites only what was read during that 
 
 ![How it stays safe](images/steps/16-how-it-stays-safe.png)
 
-## Added since the recording
+## Newer screenshots
 
 The video and the screenshots above were recorded before three additions.
 
@@ -154,6 +154,6 @@ your plan's limits.
   project (about a minute, once), then opens the page. See `QUICKSTART.md`.
 - **A real org.** Everything above ran on the simulated orgs. On a real org the steps are the
   same; time and usage are higher, and a few Salesforce behaviours are still unverified (the
-  README lists them).
+  [VERIFICATION.md](VERIFICATION.md) lists them).
 - **Applying a fix.** That is done from Claude Code in the terminal (`claude-here`), in `apply`
-  mode, with your approval for each step. The README shows the full loop on the simulated sandbox.
+  mode, with your approval for each step. [VERIFICATION.md](VERIFICATION.md) shows the full loop on the simulated sandbox.

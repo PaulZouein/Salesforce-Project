@@ -157,6 +157,9 @@ select.inline{width:auto;padding:5px 9px;font-size:13px}
 label.check{display:inline-flex;gap:8px;align-items:center;margin:0;cursor:pointer}
 label.inline{display:inline-flex;gap:6px;align-items:center;margin:0;font-weight:500}
 input[type=number]{width:96px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:5px 8px}
+.skip{position:absolute;left:-9999px;top:8px;z-index:100;background:var(--panel);color:var(--accent);padding:8px 12px;border-radius:9px;border:1px solid var(--line)}
+.skip:focus{left:8px}
+main:focus{outline:none}
 @media (max-width:860px){
   .meter{position:fixed;right:12px;bottom:12px;z-index:40;width:min(300px,calc(100vw - 24px));margin:0;box-shadow:0 6px 24px rgba(0,0,0,.18)}
   .meter .m-toggle{display:inline-flex}
@@ -166,20 +169,21 @@ input[type=number]{width:96px;border:1px solid var(--line);border-radius:9px;bac
   .app{grid-template-columns:minmax(0,1fr)}
   aside{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}
   .brand{padding:0 6px 0 0}.brand small{display:none}
-  nav{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0}nav a{white-space:nowrap;padding:7px 9px}nav a .n{display:none}
+  nav{display:flex;flex-wrap:wrap;gap:2px 4px;flex:1 1 100%;min-width:0;margin:6px 0 0}nav a{white-space:nowrap;padding:6px 9px}nav a .n{display:none}
   .side-foot{display:none}.grid2{grid-template-columns:1fr}
-  main{padding:20px 16px 60px}
+  main{padding:20px 16px 84px}
 }
 </style>
 </head>
 <body>
+<a class="skip" href="#main" id="skip">Skip to content</a>
 <div class="app">
   <aside>
     <div class="brand"><div class="mark">TI</div><div><b>Ticket Investigator</b><small>Salesforce · root cause with evidence</small></div></div>
-    <nav id="nav">
+    <nav id="nav" aria-label="Main">
       <a href="#/start" data-view="start">Get started</a>
       <a href="#/new" data-view="new">New ticket</a>
-      <a href="#/tickets" data-view="tickets">Tickets <span class="n" id="nav-count">0</span></a>
+      <a href="#/tickets" data-view="tickets">Tickets <span class="n" id="nav-count" aria-label="0 tickets">0</span></a>
       <a href="#/memory" data-view="memory">Org memory</a>
       <a href="#/safety" data-view="safety">How it stays safe</a>
     </nav>
@@ -359,8 +363,9 @@ function causeChip(status) {
 async function refreshStatus() {
   STATUS = await api("/api/status");
   $("#nav-count").textContent = STATUS.tickets;
+  $("#nav-count").setAttribute("aria-label", `${STATUS.tickets} ticket${STATUS.tickets === 1 ? "" : "s"}`);
   $("#side-foot").innerHTML = [
-    `<span class="chip ${STATUS.mode === "apply" ? "warn" : "ok"}" title="Set in sfti.config.json">Mode: ${esc(STATUS.mode)}</span>`,
+    `<span class="chip ${STATUS.mode === "apply" ? "warn" : "ok"}" title="advise: finds the cause and hands you the fix. apply: may also deploy it to a sandbox, asking you each time. Set by you in sfti.config.json.">Mode: ${esc(STATUS.mode)}</span>`,
     STATUS.demo ? `<span class="chip info">Demo orgs (simulated)</span>` : `<span class="chip">Your Salesforce CLI</span>`,
     STATUS.claude.available ? `<span class="chip ok">Claude Code found</span>` : `<span class="chip warn">Claude Code not found</span>`,
   ].join("");
@@ -382,6 +387,7 @@ document.addEventListener("click", event => {
   if (copy) { copyText(copy.dataset.copy, "Copied"); }
 });
 window.addEventListener("hashchange", route);
+$("#skip").onclick = event => { event.preventDefault(); main.setAttribute("tabindex", "-1"); main.focus(); };
 
 /* ---------- Get started ---------- */
 function loginAlias() { return (state.loginAlias || "my-org").replace(/[^A-Za-z0-9._@+-]/g, "-"); }
@@ -563,7 +569,8 @@ async function viewNew() {
   let orgError = null;
   try { orgs = (await api("/api/orgs")).orgs; } catch (error) { orgError = error; }
   state.orgs = orgs;
-  const options = orgs.map(o => `<option value="${esc(o.alias || o.username)}">${esc(o.alias || o.username)}</option>`).join("");
+  const options = (orgs.length > 1 ? `<option value="" selected disabled>Choose the org…</option>` : "") +
+    orgs.map(o => `<option value="${esc(o.alias || o.username)}">${esc(o.alias || o.username)}</option>`).join("");
   main.innerHTML = `
     <h1>New ticket</h1>
     <p class="lead">Paste the ticket exactly as it is in your ticket system. Nothing is sent back there: you get a draft comment to post yourself.</p>
@@ -655,6 +662,7 @@ async function viewNew() {
   };
   $("#submit").onclick = async () => {
     $("#new-error").innerHTML = "";
+    if (!org.value) { $("#new-error").innerHTML = errorBox(new Error("Choose the org where the problem happens.")); org.focus(); return; }
     try {
       const saving = savingChoice();
       const made = await api("/api/tickets", { method: "POST", body: { text: text.value, key: key.value, org: org.value, sandbox: sandbox.value,
@@ -773,7 +781,7 @@ async function viewTicket(key) {
       ${!hasResult || running ? `
       <div class="grid2">
         <div class="card">
-          <div class="spread"><h2>${running ? "Investigating…" : "Start the investigation"}</h2>
+          <div class="spread"><h2>${running ? (sampleRun ? "Replaying the recorded sample…" : "Investigating…") : "Start the investigation"}</h2>
             ${running ? `<button class="btn sm" id="cancel">Stop</button>` : ""}</div>
           ${running ? "" : `
             <div class="row" style="margin-bottom:12px">
@@ -797,8 +805,8 @@ async function viewTicket(key) {
 
       ${hasResult || t.ticket_html || events.length ? `
       <div class="card">
-        <div class="tabs" id="tabs">${tabs.map(([id, label]) => `<button data-tab="${id}" class="${id === state.ticketTab ? "on" : ""}">${esc(label)}</button>`).join("")}</div>
-        <div id="tab"></div>
+        <div class="tabs" id="tabs" role="tablist" aria-label="Result">${tabs.map(([id, label]) => `<button data-tab="${id}" id="tab-${id}" role="tab" aria-controls="tab" aria-selected="${id === state.ticketTab}" tabindex="${id === state.ticketTab ? 0 : -1}" class="${id === state.ticketTab ? "on" : ""}">${esc(label)}</button>`).join("")}</div>
+        <div id="tab" role="tabpanel" aria-labelledby="tab-${state.ticketTab}" tabindex="0"></div>
       </div>` : ""}
 
       ${!running ? `
@@ -837,9 +845,17 @@ async function viewTicket(key) {
         (t.original_text ? `<details ${t.ticket_html ? "" : "open"}><summary>Original text as pasted</summary><pre class="plain" style="margin-top:8px">${esc(t.original_text)}</pre></details>` : "");
       else if (tab === "activity") box.innerHTML = `<ul class="feed">${events.map(feedItem).join("")}</ul>`;
     };
+    const tabList = $("#tabs");
+    if (tabList) tabList.onkeydown = event => {
+      const all = [...tabList.querySelectorAll("button")], at = all.indexOf(document.activeElement);
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      if (at < 0 || !step) return;
+      event.preventDefault(); const next = all[(at + step + all.length) % all.length]; next.focus(); next.click();
+    };
     document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
       state.ticketTab = b.dataset.tab;
-      document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b)); paintTab();
+      document.querySelectorAll("#tabs button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", x === b); x.tabIndex = x === b ? 0 : -1; });
+      const panel = $("#tab"); if (panel) panel.setAttribute("aria-labelledby", b.id); paintTab();
     });
     paintTab();
     const feed = $("#feed"); if (feed) feed.scrollTop = feed.scrollHeight;
@@ -1044,7 +1060,7 @@ async function viewSafety() {
     <div class="card"><h2>Evidence, or it says so</h2><p>Every claim about the cause must point to a file and line, a saved query result or a debug log line. A checker verifies that each of those exists before a report is shown as passed. What cannot be proven is labelled <b>Hypothesis</b>, and a cause that cannot be confirmed is reported as <b>Not confirmed</b> with what is missing.</p></div>
     <div class="card"><h2>Your data stays here</h2><p>Query results are saved with personal data redacted. Reports and comments use record Ids, not names. Tickets, evidence and the org memory live in folders on this computer that are never committed or uploaded. Nothing is posted to your ticket system: you get a draft.</p></div>
     <div class="card"><h2>This page</h2><p>It answers only on this computer (<code>127.0.0.1</code>). It has no button, and no hidden route, that changes a Salesforce org.</p></div>
-    <p class="small muted">Details and the list of what has not yet been verified against a live org are in <code>README.md</code> and <code>docs/DECISIONS.md</code>.</p>`;
+    <p class="small muted">Details and the list of what has not yet been verified against a live org are in <code>docs/SAFETY.md</code>, <code>docs/VERIFICATION.md</code> and <code>docs/DECISIONS.md</code>, in the project folder.</p>`;
 }
 
 refreshStatus().then(route).catch(error => { main.innerHTML = errorBox(error); });

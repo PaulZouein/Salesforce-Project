@@ -99,7 +99,7 @@ on first execution; the bugs above are the ones the tests exposed.
 
 | # | Decision | Reason |
 |---|---|---|
-| 40 | No two-step confirm token for write tools (first call previews, second executes). | Proposed in `PLAN.md` 4.3 as protection when permission prompts are bypassed. It doubles the prompts in normal use, and the production block and the mode gate do not depend on prompts. The README states the limitation. |
+| 40 | No two-step confirm token for write tools (first call previews, second executes). | Proposed in `PLAN.md` 4.3 as protection when permission prompts are bypassed. It doubles the prompts in normal use, and the production block and the mode gate do not depend on prompts. `SAFETY.md` states the limitation. |
 | 41 | No wrapper around Atlassian's MCP server for Jira Cloud, and no Jira write tool of any kind. | Rule 8. A second route to the same tickets would also need its own credentials handling. |
 | 42 | The simulator was not extended to execute Apex. | Out of reach, and pretending otherwise would be worse than saying so. |
 
@@ -172,8 +172,8 @@ Developer Edition org for testing.
 | 75 | **Every run from the page gets only the built-in tools an investigation uses** (`--tools Read,Write,Edit,Glob,Grep,ToolSearch,Skill,Task,Agent,TodoWrite`; without Skill, Task and Agent when using fewer tokens). | Measured: the starting context went from 41,254 tokens to 11,644, because each tool's description is sent with every step; the investigator's own tools still load through ToolSearch. It also removes capabilities an unattended run never needs (scheduling, messages, notifications, worktrees). |
 | 76 | Views that write into the page after waiting for an answer first check that they are still shown. | Found in the first real run of the box: leaving New ticket before the org's kind arrived raised an error in the page. |
 
-Done since: a complete AI investigation started from the page was run (see the README, "The web
-interface and the org memory", under what was verified).
+Done since: a complete AI investigation started from the page was run (see [VERIFICATION.md](VERIFICATION.md),
+"The web interface and the org memory").
 
 ## Decisions for connecting an org where there is no browser
 
@@ -257,7 +257,7 @@ No Salesforce org was reachable during either build session.
 - The Jira reader against a real Jira instance.
 
 Verified against the installed CLI (`@salesforce/cli` 2.158.7, `--help` and plugin sources, no
-org): the commands, flags and result shapes listed in the README.
+org): the commands, flags and result shapes listed in [VERIFICATION.md](VERIFICATION.md).
 
 ## Things worth knowing about the code
 
