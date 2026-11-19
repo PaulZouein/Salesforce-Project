@@ -74,6 +74,10 @@ Ask before starting, naming the org and the components. Then loop, at most five 
 Each write prompts the user. If a prompt is declined, stop and ask how they want to proceed.
 If `deploy_component` reports drift, the org changed since you retrieved it: read the
 difference, re-apply the fix on the current version, and say so in the report.
+If it answers `deploy_in_progress`, the deploy is still running in the org and may still change
+it: do not deploy again and do not count the attempt as failed. Tell the user to check Setup >
+Deployment Status, wait, then continue from step 3 once it has finished, or `rollback_change` it
+(which does nothing while the org still holds the version from before).
 
 After five attempts without success, roll back, report what was tried and what was learned, and
 stop.

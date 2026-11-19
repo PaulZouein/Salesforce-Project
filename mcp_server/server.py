@@ -244,7 +244,8 @@ def org_map(org: str) -> dict[str, Any]:
 @tool()
 def verify_org_knowledge(org: str) -> dict[str, Any]:
     """Double-check the whole org memory against the org: which remembered components were modified
-    or removed since they were learned, and which notes are stale as a result. Read-only.
+    or removed since they were learned, and which notes are stale as a result. A flow that is
+    still in the org but no longer active is reported as changed (active: false). Read-only.
 
     Args:
         org: Org alias or username.
@@ -468,7 +469,9 @@ def find_dependencies(
 ) -> dict[str, Any]:
     """What uses this component, and what does it use (Tooling API MetadataComponentDependency).
 
-    An empty answer means "none recorded", not "none exist": confirm with search_metadata.
+    An empty answer means "none recorded", not "none exist": confirm with search_metadata. When
+    the name matched several components (a field of the same name on two objects, a managed
+    package's component), "same_name_warning" says so and "matched_components" lists their Ids.
 
     Args:
         org: Org alias or username.
@@ -498,6 +501,8 @@ def recent_org_changes(
 ) -> dict[str, Any]:
     """What changed in the org in a time window: setup audit trail plus modified Apex classes,
     triggers, flow versions and validation rules. Use it to compare with when the problem started.
+    A source that could not be read is reported in place with its error: its changes are unknown,
+    not absent.
 
     Args:
         org: Org alias or username.
@@ -775,7 +780,9 @@ def deploy_component(
 
     Sequence: commit the edit, snapshot the org's current version, stop if the org drifted,
     deploy, verify by retrieving again, record the change for rollback. Refused on production
-    and in advise mode.
+    and in advise mode. If the snapshot cannot be taken, nothing is deployed. If the deploy is
+    still running when the wait ends (error deploy_in_progress), it is recorded as in_progress:
+    do not deploy again; once it has finished in the org, rollback_change can undo it.
 
     Args:
         org: Org alias or username.
@@ -796,6 +803,10 @@ def deploy_component(
 @tool(write=True)
 def rollback_change(change_id: str, reason: str, force: bool = False) -> dict[str, Any]:
     """WRITE. Undo a change made by deploy_component or update_records using its pre-change snapshot.
+
+    Also accepts a deploy recorded as in_progress (it reads the components back from the org
+    first, and does nothing while the org still holds the version from before) and a change whose
+    rollback failed, so it can be tried again.
 
     Args:
         change_id: The change Id returned by the tool that made the change (see list_changes).
