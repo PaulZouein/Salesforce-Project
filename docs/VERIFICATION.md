@@ -125,6 +125,11 @@ path.
   never been opened in Claude Code. The unedited output of the first two is in
   `samples/DEMO-101/live-run/`. In the tests Claude Code is still replaced by a stand-in that
   speaks the same protocol.
+- **Again after the switch to `dontAsk`** (decision 85), on 19 November: one run of the sample
+  ticket from the page with a $2 spending limit, on Claude Code's default model (Opus 5.5).
+  Finished in under 3 minutes, root cause confirmed, evidence check passed with 18 citations,
+  usage reported $1.16. Outside `tickets/` only the tool's own data changed (audit log, org memory,
+  usage ledger): the run's file writes stayed in the ticket's folder.
 - **The start scripts and the release zip:** on every push the workflow builds the zip on Windows
   and macOS machines, unpacks it into an empty folder and runs its own start script up to the
   page answering on the simulated orgs. **Not verified:** the double-click itself, and the
