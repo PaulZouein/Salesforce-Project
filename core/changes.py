@@ -114,6 +114,13 @@ def _rollback_plan(change: dict[str, Any]) -> tuple[list[str], list[str], list[s
     return changed_specs, created_specs, changed_paths, created_paths
 
 
+def _restore_working_tree(repo: GitRepo, commit: str | None, paths: Sequence[str]) -> None:
+    """Put back the working-tree version of ``paths`` from ``commit`` (where it holds them)."""
+    keep = [p for p in dict.fromkeys(paths) if commit and repo.exists_in(commit, p)]
+    if keep:
+        repo.checkout_paths(commit, keep)
+
+
 def _deploy_still_running(exc: SfInvestigatorError) -> bool:
     """Did the command stop waiting while the deploy carries on in the org?
 
@@ -123,8 +130,9 @@ def _deploy_still_running(exc: SfInvestigatorError) -> bool:
     """
     if isinstance(exc, SfCliTimeoutError):
         return True
-    text = f"{getattr(exc, 'name', '')} {exc.message}".lower()
-    return getattr(exc, "exit_code", None) == 69 or "clienttimeout" in text or "still running" in text
+    # Only these exact signals: a message such as "another deployment is still running" means this one never started.
+    return getattr(exc, "exit_code", None) == 69 or str(getattr(exc, "name", "")) in ("ClientTimeoutError",
+                                                                                     "ClientTimeout")
 
 
 class ChangeManager:
@@ -427,7 +435,29 @@ class ChangeManager:
                 }
 
             # 5. Verify: what the org holds now should be what was deployed.
-            after = run_retrieve(self.cli, org, repo.path, specs, 10)
+            try:
+                after = run_retrieve(self.cli, org, repo.path, specs, 10)
+            except (SfCliError, SfCliTimeoutError) as exc:
+                # The deploy succeeded; only reading it back failed. It is recorded all the same, without the
+                # after-deploy state, so rollback_change reads the components back first (as for an unfinished one).
+                detail = {**unfinished, "deployed": deployed["files"], "verified": False, "verify_error": exc.message,
+                          "test_level": test_level, "tests_run": deployed["tests_run"]}
+                self._save_deploy_change(change_id, ticket_key, org, info, STATUS_DEPLOYED, pre, proposed, None,
+                                         deployed["deploy_id"], reason, approved_by, detail)
+                self.audit.record(operation, OUTCOME_SUCCEEDED, org_target=org, org_id=info.org_id,
+                                  classification=info.classification, ticket_key=ticket_key, approved_by=approved_by,
+                                  detail={"change_id": change_id, "components": specs, "verified": False,
+                                          "verify_error": exc.message})
+                return {
+                    "change_id": change_id, "status": STATUS_DEPLOYED, "org": org,
+                    "classification": info.classification, "components": specs, "deploy_id": deployed["deploy_id"],
+                    "deployed_files": deployed["files"], "pre_commit": pre, "post_commit": None, "verified": False,
+                    "tests_run": deployed["tests_run"], "diff": proposed_diff,
+                    "verify_note": f"The deploy succeeded, but reading the components back failed ({exc.message}). "
+                                   "Retrieve them to see what the org holds now.",
+                    "rollback": f"rollback_change(change_id='{change_id}') restores the snapshot taken before this "
+                                "deploy; it reads the components back first.",
+                }
             after_paths = [f["path"] for f in after["files"] if f.get("path") and f.get("state") != "Failed"]
             deployed_paths = [f["path"] for f in deployed["files"] if f.get("path")]
             compare = sorted(set(modified) | {p for p in deployed_paths if repo.exists_in(proposed, p)})
@@ -531,7 +561,8 @@ class ChangeManager:
             )
 
         org, ticket_key = change["org_target"], change["ticket_key"]
-        unfinished = change["status"] == STATUS_IN_PROGRESS
+        # Still running when the wait ran out, or deployed but never read back: what it did is read from the org.
+        unfinished = change["status"] == STATUS_IN_PROGRESS or not change.get("post_commit")
         if unfinished:
             # What the deploy did is not known yet: it is read from the org once the org is confirmed.
             planned = change.get("detail") or {}
@@ -553,20 +584,28 @@ class ChangeManager:
             )
         repo = self.workspace.metadata_repo(ticket_key)
         settled = not unfinished
+        retrying = change["status"] == STATUS_ROLLBACK_FAILED
         try:
-            repo.commit_all(f"local: edits saved before rollback of {change_id}")
+            # The retrieves below write the org's version into the working tree: a refusal puts the user's back.
+            saved = repo.commit_all(f"local: edits saved before rollback of {change_id}") or repo.head()
             if unfinished:
-                change = self._settle_unfinished_deploy(change, repo, info, force, approved_by)
+                change = self._settle_unfinished_deploy(change, repo, info, force, approved_by, saved)
                 settled = True
                 changed_specs, created_specs, changed_paths, created_paths = _rollback_plan(change)
             pre, post = change["pre_commit"], change["post_commit"]
             all_specs = list(dict.fromkeys(changed_specs + created_specs))
-            run_retrieve(self.cli, org, repo.path, all_specs, 10)
+            now_in_org = run_retrieve(self.cli, org, repo.path, all_specs, 10)
             current = repo.commit_all(f"snapshot: org state before rollback of {change_id}") or repo.head()
             assert current and pre and post
             tracked = changed_paths + created_paths
             drifted = [p for p in tracked if repo.differs(post, current, [p])]
+            if retrying:
+                # A rollback that stopped half-way already restored some files: those are not later changes.
+                drifted = [p for p in drifted if not (p in changed_paths and not repo.differs(pre, current, [p]))]
+                present = {_spec(f) for f in now_in_org["files"] if f.get("state") != "Failed"}
+                created_specs = [s for s in created_specs if s in present]  # already deleted: nothing to do
             if drifted and not force:
+                _restore_working_tree(repo, saved, tracked)
                 self._fail("rollback_change", info, org, ticket_key, approved_by,
                            {"change_id": change_id, "drifted": drifted})
                 raise DriftError(
@@ -648,7 +687,7 @@ class ChangeManager:
                               details={"change_id": change_id}) from exc
 
     def _settle_unfinished_deploy(self, change: dict[str, Any], repo: GitRepo, info: OrgInfo, force: bool,
-                                  approved_by: str | None) -> dict[str, Any]:
+                                  approved_by: str | None, saved: str | None) -> dict[str, Any]:
         """Find out from the org what a deploy recorded as in progress did, and record it as deployed.
 
         Deploys are all or nothing: every modified file now holds either the version from before
@@ -668,6 +707,7 @@ class ChangeManager:
         created = [f for f in present if _spec(f) in new]
         untouched = [p for p in modified if not repo.differs(pre, now, [p])]
         if len(untouched) == len(modified) and not created:
+            _restore_working_tree(repo, saved, [f["path"] for f in present])
             self._fail("rollback_change", info, org, ticket_key, approved_by,
                        {"change_id": change_id, "reason": "the deploy has not changed the org"})
             raise ChangeError(
@@ -677,8 +717,10 @@ class ChangeManager:
                 "again once it has finished; if it failed or was canceled, there is nothing to undo.",
                 details={"change_id": change_id, "status": STATUS_IN_PROGRESS},
             )
-        unexpected = [p for p in modified if repo.differs(proposed, now, [p])]
+        # A new component that is not what was deployed may be someone else's: deleting it needs force.
+        unexpected = [p for p in modified + [f["path"] for f in created] if repo.differs(proposed, now, [p])]
         if unexpected and not force:
+            _restore_working_tree(repo, saved, [f["path"] for f in present])
             self._fail("rollback_change", info, org, ticket_key, approved_by,
                        {"change_id": change_id, "unexpected": unexpected})
             raise DriftError(

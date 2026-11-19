@@ -41,9 +41,10 @@ class Interceptor:
         self.rules: list[list] = []
         self.calls: list[str] = []
 
-    def answer(self, words: str, envelope: dict, *, run_first: bool = False) -> None:
-        """Answer the next command containing ``words``; ``run_first`` lets the simulator do it first."""
-        self.rules.append([words, envelope, run_first])
+    def answer(self, words: str, envelope: dict, *, run_first: bool = False, skip: int = 0) -> None:
+        """Answer the next command containing ``words`` (after ``skip`` of them); ``run_first`` lets the
+        simulator do it first."""
+        self.rules.append([words, envelope, run_first, skip])
 
     def count(self, words: str) -> int:
         return sum(1 for line in self.calls if words in line)
@@ -52,8 +53,11 @@ class Interceptor:
         line = " ".join(argv)
         self.calls.append(line)
         for rule in self.rules:
-            words, envelope, run_first = rule
+            words, envelope, run_first, skip = rule
             if words in line:
+                if skip:
+                    rule[3] -= 1
+                    break
                 self.rules.remove(rule)
                 if run_first:
                     default_runner(argv, cwd, timeout, env, **kw)
@@ -152,3 +156,51 @@ def test_a_change_without_recorded_file_paths_is_not_rolled_back(setup):
     with pytest.raises(ChangeError) as refused:
         inv.rollback_change("CHG-20261119-nopath", reason="T-9: undo an old change")
     assert "recorded no file paths" in refused.value.message and len(runner.calls) == calls
+
+
+def test_a_deploy_whose_read_back_fails_is_recorded_and_can_be_rolled_back(setup, sim):
+    """The deploy succeeded; only the verify retrieve failed. It used to leave the org changed with no record."""
+    inv, runner = setup
+    original = sim.source("sandbox", SERVICE_SRC).read_bytes()
+    runner.answer("retrieve start", FAILED_RETRIEVE, skip=1)  # the snapshot works, the read-back fails
+    out = inv.deploy_component("sandbox", KEY, FIX_COMPONENTS, reason=REASON)
+    assert out["status"] == "deployed" and out["verified"] is False and "reading the components back failed" in \
+        out["verify_note"]
+    assert statuses(inv) == ["deployed"] and b"continue;" in sim.source("sandbox", SERVICE_SRC).read_bytes()
+    undone = inv.rollback_change(out["change_id"], reason="T-9: undo the deploy that was never read back")
+    assert undone["status"] == "rolled_back" and sim.source("sandbox", SERVICE_SRC).read_bytes() == original
+
+
+def test_a_refused_rollback_leaves_the_edit_in_the_working_tree(setup, project):
+    inv, runner = setup
+    runner.answer("deploy start", CLIENT_TIMEOUT)
+    with pytest.raises(DeployInProgressError) as caught:
+        inv.deploy_component("sandbox", KEY, FIX_COMPONENTS, reason=REASON)
+    with pytest.raises(ChangeError):
+        inv.rollback_change(caught.value.details["change_id"], reason="T-9: undo the deploy")
+    edited = project.ticket(KEY) / "metadata" / "force-app" / "main" / "default" / SERVICE_SRC
+    assert "continue;" in edited.read_text(encoding="utf-8")  # the retrieve no longer leaves the org's version
+
+
+def test_a_rollback_that_stopped_half_way_can_be_retried(setup, sim):
+    """The restore landed, then reading it back failed: retrying is not 'drift'."""
+    inv, runner = setup
+    original = sim.source("sandbox", SERVICE_SRC).read_bytes()
+    change_id = inv.deploy_component("sandbox", KEY, FIX_COMPONENTS, reason=REASON)["change_id"]
+    runner.answer("retrieve start", FAILED_RETRIEVE, skip=1)  # the rollback's own read-back fails
+    with pytest.raises(ChangeError) as stopped:
+        inv.rollback_change(change_id, reason="T-9: undo the deploy")
+    assert "can be called again" in (stopped.value.hint or "") and statuses(inv) == ["rollback_failed"]
+    assert sim.source("sandbox", SERVICE_SRC).read_bytes() == original  # the restore itself landed
+    again = inv.rollback_change(change_id, reason="T-9: finish undoing the deploy")
+    assert again["status"] == "rolled_back" and again["verified"] is True
+
+
+def test_another_deploy_still_running_is_a_failure_not_an_unfinished_deploy(setup):
+    """Only the CLI's own timeout means "this deploy is still running"; this deploy never started."""
+    inv, runner = setup
+    runner.answer("deploy start", {"status": 1, "exitCode": 1, "name": "DeployFailed",
+                                   "message": "Another deployment is still running in this org. Try again later."})
+    with pytest.raises(DeployFailedError):
+        inv.deploy_component("sandbox", KEY, FIX_COMPONENTS, reason=REASON)
+    assert statuses(inv) == ["failed"]
