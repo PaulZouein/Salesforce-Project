@@ -217,6 +217,7 @@ reached an org. Every fix below has a test; the simulator was changed to answer 
 | 100 | **`update_records` compares what it reads back the way Salesforce stores it**: datetimes as instants, Ids on their first 15 characters. | `2026-03-01T08:00:00Z` comes back as `…00.000+0000` and a 15-character Id with 18: a successful update was reported as changed by automation, which is false evidence. |
 | 101 | **Input checks end with `\Z`, not `$`.** | `$` also matches before a final line break: `init_ticket("ABC-123\n")` made a folder whose name ends in one. |
 | 102 | **Windows details**: git runs with `core.longpaths=true`; the org-memory lock treats "access denied" (a lock file still being deleted) as busy rather than impossible; each save writes its own temporary file and retries the final rename briefly. | Deep metadata paths under a long project folder failed with "Filename too long", and two programs could both write the org memory without the lock. |
+| 103 | **pytest and the simulator ask before they run; a hardened hook and `--protect-code` are prepared for the owner** (`scripts/owner/`). The generator no longer allows `python -m pytest` or `python -m simulator` without asking. The proposed hook blocks running anything under `tickets/` and excuses only commands that start pytest. `--protect-code` denies edits to `core/`, `mcp_server/`, `webapp/`, `scripts/`, `CLAUDE.md` and the skills. | The safety review ran code from a saved debug log with `python -m pytest --doctest-glob=*.log tickets/…`: allowed without a prompt, it changed a record in production with nothing in the audit log. A permission rule matches the start of a command and cannot stop what follows. The assistant may not edit the settings or the hook, so both are prepared and tested (`tests/test_proposed_guard.py` runs every case of the installed hook through the new one) and the owner applies them. `--protect-code` is an option, not the default: in the folder where the tool is developed it would stop that work. |
 
 ## Open points for the owner
 
@@ -233,32 +234,13 @@ reached an org. Every fix below has a test; the simulator was changed to answer 
    guard afterwards. The committed file was checked after decision 43: it is byte-for-byte the
    generator's output, `python scripts/generate_settings.py --check` reports it as up to date, and
    the full suite passes (583 passed, 1 expected failure).
-1. **Hook false positive.** `guard.py` treats `.py` in a file name as a Python invocation, so a
-   Bash command that reads a Python file *and* names a write function, such as
-   `grep deploy_component core/changes.py`, is blocked. It errs on the side of blocking. The
-   same test also lets `python -c "… deploy_component …"` through if the word `pytest` appears
-   anywhere in the command. A tighter rule would look at what each command segment actually
-   starts with:
-
-   ```python
-   PYTHON_NAMES = re.compile(r"^(python[\d.]*|pypy[\d.]*|py|ipython)$")
-
-   def runs_python_code(words):
-       """A segment that starts a Python interpreter on something other than pytest."""
-       if not words or not PYTHON_NAMES.match(base_name(words[0])):
-           return False
-       return not re.search(r"(^|\s)(-m\s+)?pytest(\s|$)", " ".join(words[1:]))
-
-   # in check_bash, replacing the first test:
-   segments = [first_words(s) for s in re.split(r"[;&|\n`]|\$\(|\(|\)", command)]
-   if WRITE_FUNCTIONS.search(command) and any(runs_python_code(w) for w in segments):
-       raise Blocked(...)
-   ```
-
-   This was written and not applied (decision 18). If you apply it, the expected-failure test in
-   `tests/test_guard_hook.py` will start passing and report itself; turn it into a normal test.
-   Note that the sketch above still accepts the word `pytest` anywhere after the interpreter;
-   requiring `-m pytest` to come directly after it would close that as well.
+1. **Apply the hardened settings and hook** ([`scripts/owner/README.md`](../scripts/owner/README.md),
+   decision 103). In your own terminal: `python scripts/generate_settings.py`, then copy
+   `scripts/owner/guard.py` over the installed hook (`guard.py` in the hooks folder under
+   `.claude`), run the tests and commit both files. pytest and the simulator then ask before
+   they run; the hook blocks running anything under `tickets/`, excuses only commands that really
+   start pytest, and no longer blocks `grep deploy_component core/changes.py` (the false positive
+   of decision 18). Until you do, the tests report two expected failures that name this step.
 2. **First contact with a real org.** Everything in the list below is unverified. Start with a
    sandbox in advise mode.
 3. **`mcp` 1.x.** The fallback import exists, but only 2.3.0 has been run, locally and in CI.

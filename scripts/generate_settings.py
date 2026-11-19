@@ -5,9 +5,14 @@ write tools go to ``ask``, and nothing else is added.
 
 Usage::
 
-    python scripts/generate_settings.py            # full settings, guard enabled
-    python scripts/generate_settings.py --no-guard # without the hook and edit protection
-    python scripts/generate_settings.py --check    # exit 1 if the file is out of date
+    python scripts/generate_settings.py                # full settings, guard enabled
+    python scripts/generate_settings.py --protect-code # also deny edits to the tool's own code
+    python scripts/generate_settings.py --no-guard     # without the hook and edit protection
+    python scripts/generate_settings.py --check        # exit 1 if the file is out of date
+
+``--protect-code`` is for a folder used only to investigate tickets: the assistant can then not
+edit the code that enforces the rules (``core/``, ``mcp_server/``, ``webapp/``, ``scripts/``),
+``CLAUDE.md`` or the skills, even in a session where edits are accepted without asking.
 
 ``--no-guard`` exists for working on the tool itself: with the guard on, the assistant
 cannot edit the settings, the hook or ``sfti.config.json``.
@@ -31,13 +36,12 @@ HOOK_COMMAND = (
     '${SFTI_PYTHON:-python} "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py"'
 )
 
+# Only the read-only set-up check runs without asking. pytest and the simulator ask (decision 103):
+# a prefix rule cannot stop extra arguments, and "python -m pytest --doctest-glob=*.log tickets/..."
+# runs whatever a saved debug log contains.
 SAFE_BASH = [
     "Bash(python -m core.prereqs:*)",
     "Bash(python3 -m core.prereqs:*)",
-    "Bash(python -m pytest:*)",
-    "Bash(python3 -m pytest:*)",
-    "Bash(python -m simulator:*)",
-    "Bash(python3 -m simulator:*)",
 ]
 
 DENY_CLI = [
@@ -61,7 +65,15 @@ DENY_PROTECTED_FILES = [
 ]
 
 
-def build(guard: bool = True) -> dict:
+DENY_TOOL_CODE = [
+    f"{tool}(/{path})"
+    for path in ("core/**", "mcp_server/**", "webapp/**", "scripts/**", "CLAUDE.md", ".claude/skills/**",
+                 ".claude/agents/**")
+    for tool in ("Edit", "Write")
+]
+
+
+def build(guard: bool = True, protect_code: bool = False) -> dict:
     from mcp_server import server
 
     settings: dict = {
@@ -70,7 +82,8 @@ def build(guard: bool = True) -> dict:
         "permissions": {
             "allow": [PREFIX + name for name in server.READ_ONLY_TOOLS] + SAFE_BASH,
             "ask": [PREFIX + name for name in server.WRITE_TOOLS],
-            "deny": DENY_CLI + (DENY_PROTECTED_FILES if guard else []),
+            "deny": DENY_CLI + (DENY_PROTECTED_FILES if guard else [])
+            + (DENY_TOOL_CODE if guard and protect_code else []),
         },
     }
     if guard:
@@ -84,14 +97,15 @@ def build(guard: bool = True) -> dict:
     return settings
 
 
-def render(guard: bool = True) -> str:
-    return json.dumps(build(guard), indent=2) + "\n"
+def render(guard: bool = True, protect_code: bool = False) -> str:
+    return json.dumps(build(guard, protect_code), indent=2) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     guard = "--no-guard" not in argv
-    text = render(guard)
+    protect_code = guard and "--protect-code" in argv
+    text = render(guard, protect_code)
     if "--check" in argv:
         current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
         if current != text:
@@ -101,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     TARGET.parent.mkdir(parents=True, exist_ok=True)
     TARGET.write_text(text, encoding="utf-8")
-    print(f"wrote {TARGET.relative_to(ROOT)} (guard {'on' if guard else 'off'})")
+    print(f"wrote {TARGET.relative_to(ROOT)} (guard {'on' if guard else 'off'}"
+          f"{', tool code protected' if protect_code else ''})")
     return 0
 
 

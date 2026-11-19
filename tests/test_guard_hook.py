@@ -108,8 +108,9 @@ def test_allowed_bash_commands(command):
     guard.evaluate(bash(command))
 
 
-@pytest.mark.xfail(strict=True, reason="Known false positive, recorded in docs/DECISIONS.md: the hook treats "
-                                       "'.py' in a file name as a Python invocation. It errs on the side of blocking.")
+@pytest.mark.xfail('"pytest" not in command' in HOOK.read_text(encoding="utf-8"), strict=True,
+                   reason="Known false positive of the installed hook, recorded in docs/DECISIONS.md: it treats "
+                          "'.py' in a file name as a Python invocation. scripts/owner/guard.py fixes it.")
 def test_known_false_positive_reading_a_python_file_that_names_a_write_function():
     guard.evaluate(bash("grep -n deploy_component core/changes.py"))
 

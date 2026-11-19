@@ -105,6 +105,7 @@ generator disagree.
 |---|---|
 | Write tools | all 6 in `ask`: every call prompts |
 | Read-only tools | all 36 in `allow` |
+| `python -m pytest`, `python -m simulator` | allowed without asking in the committed file; the generator now leaves them out, so they ask first once you regenerate (decision 103, [`scripts/owner/`](../scripts/owner/README.md)) |
 | Direct `sf` / `sfdx` in Bash | denied by permission rule and by the hook |
 | Guard hook | installed for Bash, Edit and Write |
 | Edits to `sfti.config.json`, `.mcp.json`, `.claude/settings.json`, `.claude/hooks/` | denied by permission rule and by the hook |
@@ -117,7 +118,17 @@ can, in your own editor or terminal.
 python scripts/generate_settings.py            # regenerate after adding or renaming a tool
 python scripts/generate_settings.py --check    # is the committed file up to date?
 python scripts/generate_settings.py --no-guard # same permission lists, no hook, no edit protection
+python scripts/generate_settings.py --protect-code  # also deny edits to core/, mcp_server/, webapp/, scripts/, CLAUDE.md, skills
 ```
+
+`--protect-code` suits a folder used only to investigate tickets: the assistant can then not change
+the code that enforces these rules, even in a session where edits are accepted without asking. It
+also stops it from working on the tool itself, so leave it out where you develop the tool.
+
+A hardened hook is prepared in [`scripts/owner/guard.py`](../scripts/owner/README.md), with the
+steps to install it: it blocks running anything under `tickets/` (evidence is read, never
+executed), stops excusing every command that contains the word `pytest`, and fixes the known false
+positive below.
 
 Use `--no-guard` only while you want the assistant to work on the tool itself (its settings, its
 hook or the config file), and regenerate with the guard afterwards.
