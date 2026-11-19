@@ -280,7 +280,7 @@ def test_quick_start_names_only_things_that_exist():
     for name in START_FILES:
         assert f"`{name}`" in text, name
     assert "The two modes" in text and "## The two modes" in (ROOT / "README.md").read_text(encoding="utf-8")
-    page = (ROOT / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
+    page = "".join((ROOT / "webapp" / "static" / name).read_text(encoding="utf-8") for name in ("index.html", "app.js"))
     for label in ("I have connected it", "Check again", "Load the sample ticket", "Replay the recorded sample",
                   "Investigate with Claude Code", "Investigate again", "Add information", "Download the result",
                   "New ticket", "Get started", "Org memory", "Root cause", "Ticket comment", "Evidence"):

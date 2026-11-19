@@ -28,6 +28,18 @@ HISTORY_OBJECTS = {
 }
 
 
+#: History fields that point at a person (a user, a queue, a contact or a lead) when they are not Ids.
+_PERSON_LOOKUP_FIELDS = frozenset({"owner", "contact", "who", "lead", "user", "manager", "assignee", "requester",
+                                   "delegatedapprover", "createdby", "lastmodifiedby"})
+#: Setup audit trail sections whose descriptions name people ("Changed profile for user Jane Doe…").
+_USER_SECTIONS_RE = re.compile(r"user|contact|partner|portal|communit", re.IGNORECASE)
+
+
+def _is_id(value: Any) -> bool:
+    """A Salesforce record Id: 15 or 18 letters and digits, at least one digit."""
+    return isinstance(value, str) and bool(_RECORD_ID_RE.match(value)) and any(c.isdigit() for c in value)
+
+
 def _mask_emails(text: Any) -> Any:
     return _EMAIL_RE.sub("[email]", text) if isinstance(text, str) else text
 
@@ -73,6 +85,9 @@ def recent_org_changes(
             display = _mask_emails(row.get("Display"))
             if needle and needle not in f"{display} {row.get('Section')} {row.get('Action')}".lower():
                 continue
+            if _USER_SECTIONS_RE.search(str(row.get("Section") or "")):
+                # These descriptions name the people concerned; the action code says what was done.
+                display = f"[hidden: a change to {row.get('Section')} that names a person; action {row.get('Action')}]"
             entries.append({
                 "when": row.get("CreatedDate"),
                 "section": row.get("Section"),
@@ -146,11 +161,17 @@ def record_history(
         f"SELECT Field, OldValue, NewValue, CreatedById, CreatedDate FROM {history} "
         f"WHERE {parent} = {soql_literal(record_id)} ORDER BY CreatedDate DESC, Id DESC LIMIT {limit}",
     ))
+    # A change to a lookup (Owner, Contact…) is recorded twice: once with Ids, once with display names, which
+    # are people's names for users, queues and contacts. The Ids are kept; the names are not.
+    with_ids = {(row.get("Field"), row.get("CreatedDate")) for row in rows
+                if _is_id(row.get("OldValue")) or _is_id(row.get("NewValue"))}
     redacted: set[str] = set()
     entries = []
     for row in rows:
         field = str(row.get("Field") or "")
-        hide = bool(PERSONAL_FIELD_PATTERN.search(field))
+        names_of_a_lookup = (field.lower() in _PERSON_LOOKUP_FIELDS or (row.get("Field"), row.get("CreatedDate")) in with_ids) \
+            and not (_is_id(row.get("OldValue")) or _is_id(row.get("NewValue")))
+        hide = bool(PERSONAL_FIELD_PATTERN.search(field)) or names_of_a_lookup
         if hide:
             redacted.add(field)
         entries.append({

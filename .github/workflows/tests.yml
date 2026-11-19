@@ -15,8 +15,9 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer push to the same branch replaces a run that is still going.
-  group: tests-${{ github.ref }}
+  # A newer push to the same branch replaces a run that is still going; a full run started by hand is not
+  # cancelled by a push.
+  group: tests-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:

@@ -210,8 +210,18 @@ def test_setup_audit_trail_emails_are_masked(inv, sim):
         "Display": "Changed email for user from old.person@customer.test to new.person@customer.test",
         "CreatedDate": "2026-11-10T10:00:00.000+0000", "CreatedById": "005Ws000001AdmnIAB", "DelegateUser": None})
     (sim.org_dir("prod") / "records.json").write_text(json.dumps(records))
+    records["SetupAuditTrail"].append({
+        "Id": "0YmWs00000Aud10IAB", "Action": "changedApexClass", "Section": "Apex Class",
+        "Display": "Changed CaseEscalationService Apex Class code (notify ops@customer.test)",
+        "CreatedDate": "2026-11-10T11:00:00.000+0000", "CreatedById": "005Ws000001AdmnIAB", "DelegateUser": None})
+    (sim.org_dir("prod") / "records.json").write_text(json.dumps(records))
     out = inv.recent_org_changes("prod", "2026-11-10", contains="Manage Users")
-    assert out["setup_audit_trail"][0]["display"] == "Changed email for user from [email] to [email]"
+    # User-management entries name the people concerned: hidden, with the action code kept.
+    assert out["setup_audit_trail"][0]["display"] == (
+        "[hidden: a change to Manage Users that names a person; action changedemail]")
+    assert "person@" not in json.dumps(out)
+    other = inv.recent_org_changes("prod", "2026-11-10", contains="Apex Class")["setup_audit_trail"]
+    assert other[0]["display"] == "Changed CaseEscalationService Apex Class code (notify [email])"
 
 
 def test_record_history(inv, sim):

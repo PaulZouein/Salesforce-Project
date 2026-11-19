@@ -28,6 +28,23 @@ MAX_TRACE_MINUTES = 24 * 60
 _LOG_ID_RE = re.compile(r"^07L[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
 _USER_ID_RE = re.compile(r"^005[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?$")
+_EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+#: What Salesforce writes into a log that reached its size limit (20 MB): lines were removed, from anywhere.
+TRUNCATION_MARKER = "MAXIMUM DEBUG LOG SIZE REACHED"
+TRUNCATION_WARNING = (
+    "This log reached Salesforce's size limit and lines were removed from it, anywhere in the log. A line that "
+    "is not in it may still have run: do not conclude from absence. Narrow the trace (a class-level trace "
+    "flag, or lower log levels) and capture the transaction again."
+)
+
+
+def mask_emails(text: str) -> str:
+    """E-mail addresses, and usernames (which look like them), masked in text shown from a log."""
+    return _EMAIL_RE.sub("[email]", text)
+
+
+def is_truncated(lines: list[str]) -> bool:
+    return any(TRUNCATION_MARKER in line for line in lines)
 
 #: Log events worth pointing out in a summary.
 NOTABLE_EVENTS = (
@@ -60,9 +77,12 @@ def _soql_datetime(value: str) -> str:
         )
     if "T" not in value:
         return value + "T00:00:00Z"
-    if re.search(r"(Z|[+\-]\d{2}:?\d{2})$", value):
-        return value
-    return value + "Z"
+    # SOQL wants YYYY-MM-DDThh:mm:ss and a zone: "2026-11-10T08:00" alone was sent as-is and refused by the org.
+    date, time, seconds, _fraction, zone = re.match(
+        r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?$", value).groups()
+    if zone and zone != "Z" and ":" not in zone:
+        zone = zone[:3] + ":" + zone[3:]
+    return f"{date}T{time}{seconds or ':00'}{zone or 'Z'}"
 
 
 def list_debug_logs(
@@ -145,19 +165,29 @@ def get_debug_log(
     downloaded = False
     if not path.exists():
         ticket_dir = workspace.ticket_dir(ticket_key)
-        result = cli.run(
-            ["apex", "get", "log", "--log-id", log_id, "--output-dir", "logs", "--target-org", org],
-            cwd=ticket_dir,
-            timeout=300,
-        )
+        try:
+            result = cli.run(
+                ["apex", "get", "log", "--log-id", log_id, "--output-dir", "logs", "--target-org", org],
+                cwd=ticket_dir,
+                timeout=300,
+            )
+        except SfCliError as exc:
+            if re.search(r"NOT_FOUND|404|does not exist|not found", f"{exc.name} {exc.message}", re.IGNORECASE):
+                raise WorkspaceError(
+                    f"The log {log_id} is no longer in the org.",
+                    hint="Debug logs are deleted after a while. Run list_debug_logs to see what is available.",
+                ) from exc
+            raise
         downloaded = True
         if not path.exists():
-            # Older and newer CLI versions differ in what --json returns with --output-dir:
-            # a list of file paths, or a list of {"log": "..."} objects.
+            # The CLI writes <dir>/<id>.log. What --json returns with --output-dir differs between versions:
+            # the log's text (2.158.7, plugin-apex get/log.js), file paths, or {"log": "..."} objects.
             text = None
             for item in result or []:
                 if isinstance(item, dict) and isinstance(item.get("log"), str):
                     text = item["log"]
+                elif isinstance(item, str) and ("\n" in item or len(item) > 400 or not item.endswith(".log")):
+                    text = item                                   # the log itself, not a path
                 elif isinstance(item, str):
                     candidate = Path(item)
                     candidate = candidate if candidate.is_absolute() else ticket_dir / candidate
@@ -183,6 +213,9 @@ def get_debug_log(
         "size_bytes": path.stat().st_size,
         "summary": summarize_log(lines),
     }
+    if is_truncated(lines):
+        out["truncated"] = True
+        out["warning"] = TRUNCATION_WARNING
 
     if grep:
         try:
@@ -201,7 +234,7 @@ def get_debug_log(
             for n in range(max(0, index - context_lines), min(len(lines), index + context_lines + 1)):
                 if n not in shown:
                     shown.add(n)
-                    excerpt.append(f"{n + 1}: {lines[n][:500]}")
+                    excerpt.append(f"{n + 1}: {mask_emails(lines[n][:500])}")
         out["grep"] = grep
         out["matching_lines"] = matched
         out["excerpt"] = "\n".join(excerpt[:max_lines])
@@ -212,7 +245,7 @@ def get_debug_log(
         end = min(len(lines), start + max_lines - 1)
         out["start_line"] = start
         out["end_line"] = end
-        out["excerpt"] = "\n".join(f"{n}: {lines[n - 1][:500]}" for n in range(start, end + 1))
+        out["excerpt"] = "\n".join(f"{n}: {mask_emails(lines[n - 1][:500])}" for n in range(start, end + 1))
         if end < len(lines):
             out["note"] = (
                 f"Showing lines {start}-{end} of {len(lines)}. Use grep, or pass start_line, "

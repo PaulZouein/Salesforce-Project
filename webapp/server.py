@@ -46,6 +46,13 @@ MAX_UPLOAD_BODY_BYTES = tickets.MAX_ATTACHMENT_BYTES * 4 // 3 + 4096
 MAX_TICKET_BODY_BYTES = tickets.MAX_TICKET_PDF_BYTES * 4 // 3 + tickets.MAX_TICKET_CHARS * 4 + 65536
 DEFAULT_PORT = 8765
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+#: The page runs only its own script file: no inline script, so injected markup cannot run code even if it
+#: got past the HTML escaping. Styles stay inline (the page is one file).
+PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+#: An exported report: a sandboxed document with no script and nothing loaded from anywhere.
+REPORT_CSP = ("sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; "
+              "base-uri 'none'; form-action 'none'")
 _LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 _HOST_NAME_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
 
@@ -272,7 +279,7 @@ class App:
         print(f"Refused a request with {what} {shown}: this page only answers on this computer. If {shown} is a "
               f"proxy you trust in front of it, start it with --allow-host {shown}", file=sys.stderr, flush=True)
 
-    def connect_org(self, alias: Any, auth_url: Any) -> dict[str, Any]:
+    def connect_org(self, alias: Any, auth_url: Any, *, replace: bool = False) -> dict[str, Any]:
         """Save an org's authorization on this computer from the authorization URL the user pasted.
 
         It changes nothing in any org. The URL works like a password: it goes to the Salesforce CLI
@@ -285,6 +292,14 @@ class App:
             raise InputValidationError("Give the org a short name, for example my-dev.")
         alias = validate_target_org(alias.strip())
         auth = read_auth_url(auth_url)
+        if not replace:
+            # Pointing a name in use at another org changes what every later command with that name reaches.
+            in_use = {str(o.get("alias") or "") for o in self.investigator().list_orgs().get("orgs", [])}
+            if alias in in_use:
+                raise InputValidationError(
+                    f"The name {alias!r} is already used by a connected org.",
+                    hint="Choose another short name, or confirm that this name should now point at the org you "
+                         "are connecting.", details={"alias_in_use": alias})
         print(f"Connecting the org '{alias}' at {auth.host}...", file=sys.stderr, flush=True)
         try:
             connected = self.investigator().cli.connect_with_auth_url(alias, auth)
@@ -376,7 +391,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if os.environ.get("SFTI_WEB_LOG"):
                 super().log_message(format, *args)
 
-        def _send(self, status: int, body: bytes, content_type: str, *, download_as: str | None = None) -> None:
+        def _send(self, status: int, body: bytes, content_type: str, *, download_as: str | None = None,
+                  csp: str = PAGE_CSP) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -385,10 +401,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header(
-                "Content-Security-Policy",
-                "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            self.send_header("Content-Security-Policy", csp)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -461,6 +474,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if path in ("/", "/index.html"):
                 page = (STATIC / "index.html").read_text(encoding="utf-8").replace("__SFTI_TOKEN__", app.token)
                 return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+            if path == "/static/app.js":
+                return self._send(200, (STATIC / "app.js").read_bytes(), "text/javascript; charset=utf-8")
             if path == "/api/status":
                 return self._guarded(app.status)
             refresh = (query.get("refresh") or [""])[0] == "1"
@@ -508,7 +523,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 try:
                     validate_ticket_key(match.group(1))
                     report = inv().workspace.ticket_dir(match.group(1)) / "report.html"
-                    return self._send(200, report.read_bytes(), "text/html; charset=utf-8")
+                    # Written by the investigator from ticket text and org data: shown in a sandbox, with no script.
+                    return self._send(200, report.read_bytes(), "text/html; charset=utf-8", csp=REPORT_CSP)
                 except (SfInvestigatorError, OSError):
                     return self._error(HTTPStatus.NOT_FOUND, "No exported report for this ticket yet.")
             match = _RESULT_ROUTE.match(path)
@@ -546,7 +562,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if path == "/api/demo":
                 return self._guarded(lambda: app.set_demo(bool(body.get("enabled")), reset=bool(body.get("reset"))))
             if path == "/api/orgs/connect":
-                return self._guarded(lambda: app.connect_org(body.get("alias"), body.get("auth_url")))
+                return self._guarded(lambda: app.connect_org(body.get("alias"), body.get("auth_url"),
+                                                             replace=body.get("replace") is True))
             if path == "/api/ticket-pdf":
                 def read_pdf() -> dict[str, Any]:
                     found = tickets.read_pdf(_decode(body.get("content_base64")))

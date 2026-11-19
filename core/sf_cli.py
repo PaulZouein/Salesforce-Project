@@ -224,9 +224,10 @@ class Permit:
     Only :func:`_issue_permit` can create one; ``org_guard`` is the only caller.
     """
 
-    __slots__ = ("kind", "target", "org_id", "classification", "operation", "uses_left")
+    __slots__ = ("kind", "target", "username", "org_id", "classification", "operation", "uses_left")
 
-    def __init__(self, key: object, *, kind: str, target: str, org_id: str, classification: str, operation: str, uses: int):
+    def __init__(self, key: object, *, kind: str, target: str, org_id: str, classification: str, operation: str, uses: int,
+                 username: str | None = None):
         if key is not _PERMIT_KEY:
             raise WritePermitError("Permits can only be issued by org_guard.")
         if kind not in (KIND_WRITE, KIND_TEST):
@@ -240,6 +241,9 @@ class Permit:
             raise WritePermitError("A permit must cover between 1 and 20 commands.")
         self.kind = kind
         self.target = target
+        #: The org's username, resolved when the org was checked. Commands run against it, not the alias: an
+        #: alias can be pointed at another org in the meantime (production included); a username cannot.
+        self.username = username
         self.org_id = org_id
         self.classification = classification
         self.operation = operation
@@ -249,11 +253,26 @@ class Permit:
         return f"Permit({self.kind}, {self.target}, {self.operation}, uses_left={self.uses_left})"
 
 
-def _issue_permit(*, kind: str, target: str, org_id: str, classification: str, operation: str, uses: int = 1) -> Permit:
+def _issue_permit(*, kind: str, target: str, org_id: str, classification: str, operation: str, uses: int = 1,
+                  username: str | None = None) -> Permit:
     """Create a permit. For ``org_guard`` only."""
     return Permit(
-        _PERMIT_KEY, kind=kind, target=target, org_id=org_id, classification=classification, operation=operation, uses=uses
+        _PERMIT_KEY, kind=kind, target=target, org_id=org_id, classification=classification, operation=operation,
+        uses=uses, username=username,
     )
+
+
+#: Every spelling the Salesforce CLI accepts for the target org. A command that needs a permit must use exactly
+#: one, written "--target-org <org>": a second one, or another spelling, could name a different org.
+_TARGET_FLAG_SPELLINGS = ("--target-org", "-o", "--targetusername", "-u")
+
+
+def _single_target_index(args: Sequence[str]) -> int | None:
+    """Index of the value of the only target flag, or ``None`` when there is not exactly one plain one."""
+    found = [i for i, arg in enumerate(args) if arg.split("=", 1)[0] in _TARGET_FLAG_SPELLINGS]
+    if len(found) != 1 or args[found[0]] != "--target-org" or found[0] + 1 >= len(args):
+        return None
+    return found[0] + 1
 
 
 # --- Process handling -------------------------------------------------------------------
@@ -436,7 +455,13 @@ class SfCli:
                     "or move the project to a path without these characters.",
                 )
 
-    def _check_permit(self, kind: str, args: Sequence[str], permit: Permit | None) -> None:
+    def _check_permit(self, kind: str, args: list[str], permit: Permit | None) -> None:
+        """Check the permit for a write or test command, and bind the command to the org that was checked.
+
+        The command must name its org exactly once, as ``--target-org``; that name must be the one the permit
+        was issued for, and it is replaced by the org's username from the permit, so the command reaches the
+        org the guard checked even if the alias was pointed elsewhere since.
+        """
         if kind == KIND_READ:
             return
         label = "sf " + " ".join(command_tokens(args))
@@ -451,13 +476,19 @@ class SfCli:
             raise WritePermitError(f"'{label}' needs a {kind} permit; got a {permit.kind} permit.")
         if permit.uses_left <= 0:
             raise WritePermitError("This permit has already been used.")
-        target = _flag_value(args, "--target-org")
+        index = _single_target_index(args)
+        if index is None:
+            raise WritePermitError(f"'{label}' must name its org exactly once, as --target-org <org>.")
+        target = args[index]
         if target != permit.target:
             raise WritePermitError(
                 f"The permit was issued for org {permit.target!r} but the command targets {target!r}."
             )
         if kind == KIND_WRITE and permit.classification not in WRITABLE_CLASSIFICATIONS:
             raise ProductionWriteBlockedError(f"Writes are blocked on {permit.classification} orgs.")
+        if permit.username:
+            validate_target_org(permit.username)
+            args[index] = permit.username
         permit.uses_left -= 1
 
     # -- running -------------------------------------------------------------------------
@@ -586,8 +617,9 @@ class SfCli:
         if envelope is None:
             raise SfCliOutputError(
                 f"'{label}' did not return JSON (exit code {proc.returncode}).",
-                details={"stdout": _without_secrets(_tail(proc.stdout), auth),
-                         "stderr": _without_secrets(_tail(proc.stderr), auth)},
+                # Cleaned first, then cut: a cut through the token would leave part of it behind.
+                details={"stdout": _tail(_without_secrets(proc.stdout, auth)),
+                         "stderr": _tail(_without_secrets(proc.stderr, auth))},
             )
         envelope = scrub_secrets(envelope)
         status = envelope.get("status", proc.returncode)
@@ -599,7 +631,7 @@ class SfCli:
         )
         raise SfCliError(
             message,
-            name=str(envelope.get("name") or envelope.get("code") or "Error"),
+            name=_without_secrets(str(envelope.get("name") or envelope.get("code") or "Error"), auth),
             exit_code=status if isinstance(status, int) else proc.returncode,
             command=label,
             hint=_connect_hint(message, auth.host),

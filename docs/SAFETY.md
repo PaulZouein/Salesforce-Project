@@ -22,8 +22,12 @@ How gate 1 is made structural rather than a convention:
   commands, with the exact flags allowed on each, runs freely. **Everything else is a write**,
   including commands the wrapper has never seen.
 - A write runs only with a permit. Permits are issued only by `org_guard`, only for an org that
-  classifies as non-production, are bound to that one org, and cover a fixed number of commands.
-  The permit class itself refuses to be created for a production classification.
+  classifies as non-production, and cover a fixed number of commands. The permit class itself
+  refuses to be created for a production classification.
+- A permit is bound to the org's **username**, read when the org was checked, and every permitted
+  command runs against that username. An alias can be pointed at another org at any moment (in
+  another terminal, or by connecting an org under a name already in use); a username cannot. A
+  permitted command must name its org exactly once, as `--target-org`.
 - Every attempt is written to a local audit log (`audit/audit.db`, not committed), including the
   blocked ones. `audit_log` and `list_changes` show it.
 
@@ -31,14 +35,29 @@ Other guards in `core/`:
 
 - **Secrets.** Access tokens and similar fields are stripped from everything the CLI returns
   before it is returned, logged or put in an error.
-- **Row limits and read-only queries.** Only a single `SELECT` runs. `FOR UPDATE` is refused.
+- **Row limits and read-only queries.** Only a single `SELECT` runs. `FOR UPDATE`, `FOR VIEW`,
+  `FOR REFERENCE`, `UPDATE TRACKING` and `UPDATE VIEWSTAT` are refused: each makes a read change the
+  org (a lock, last-viewed dates, Knowledge statistics), and the read tools run without approval.
+  `COUNT()` and other single-row aggregates are left without `LIMIT`, which would cap the count.
 - **Redaction.** Values of fields that look like personal data (email, phone, address, birthdate,
-  names on Contact, Lead and User, and more) are replaced with `[REDACTED]`. `reveal_fields` shows
-  a value in the chat when the value itself is the bug; files saved under `queries/` stay redacted
-  regardless.
+  names on Contact, Lead and User, and more) are replaced with `[REDACTED]`. So are the name of the
+  record behind an owner or other polymorphic lookup, the names of person accounts, grouped
+  (aggregate) columns taken from such fields, the names row of a lookup's field history, the
+  descriptions of user-management entries in the setup audit trail, and e-mail addresses in text
+  quoted from debug logs. `reveal_fields` shows a value in the chat when the value itself is the
+  bug; files saved under `queries/` stay redacted regardless.
+- **Debug logs.** A log Salesforce cut off at its size limit is flagged as truncated, with the
+  warning that a statement missing from it may still have run.
 - **Path confinement.** File tools only read inside `tickets/<KEY>/`, and never inside `.git`.
 - **Report check.** `validate_report` fails a report whose citations do not resolve to a real
-  file and line, whose confirmed root cause cites no evidence, or which contains an email address.
+  file and line, whose confirmed root cause cites no evidence, or which contains an email address
+  (only `example.com`-style and system mailboxes pass: the `.invalid` addresses of a refreshed
+  sandbox are real people's), and warns about phone numbers.
+- **The local page.** Report text is escaped before it is shown, links included. The page runs
+  only its own script file, never inline script, and exported reports are served in a sandbox with
+  no script at all. An investigation started from the page gets the read-only tools only, no shell
+  and no web access, runs in Claude Code's `dontAsk` mode, and may write files only under
+  `tickets/`.
 - **Nothing is posted.** No tool sends anything to a ticket system, chat or email. The optional
   Jira reader only sends `GET` requests.
 
@@ -53,19 +72,26 @@ Other guards in `core/`:
 3. editing `sfti.config.json`, `.mcp.json`, `.claude/settings.json`, `.claude/hooks/` and the
    audit database.
 
-It is **pattern matching, not a sandbox**. It stops mistakes and shortcuts; a determined attempt
-to disguise a command can get past it. It also has one known false positive: a Bash command that
-both reads a `.py` file and names a write function (for example
-`grep deploy_component core/changes.py`) is blocked. The hard guarantee, no writes to production,
-is gate 1 above and does not depend on the hook.
+It is **pattern matching, not a sandbox**. It stops mistakes and shortcuts; a disguised command
+gets past it (`bash -c '…'`, `eval`, the CLI's JavaScript run with `node`, a script file that
+calls the CLI). It also has one known false positive: a Bash command that both reads a `.py` file
+and names a write function (for example `grep deploy_component core/changes.py`) is blocked.
+
+The hard guarantee, no writes to production, is gate 1 above, and it covers everything that goes
+through `core/`: every tool of the MCP server. A command that runs the Salesforce CLI itself does
+not go through `core/`. In a normal session such a command waits for your approval, because Bash
+commands ask; with permission prompts bypassed, only this hook stands in its way. So in a session
+with prompts bypassed, do not stay logged in to a production org with the Salesforce CLI.
 
 The hook is built so that it cannot lock a session: the command does nothing when the script is
 missing, and the script exits 0 on any internal error.
 
 ### If you run Claude Code with permission prompts bypassed
 
-Gate 3 disappears: write tools no longer wait for you. Gates 1 and 2 are unaffected, so
-production stays read-only and advise mode still refuses fix-applying writes. Do not combine
+Gate 3 disappears: write tools no longer wait for you. Gates 1 and 2 are unaffected for the
+tools, so production stays read-only through them and advise mode still refuses fix-applying
+writes. Bash commands no longer ask either, so a command that runs the Salesforce CLI directly is
+stopped only by the hook (see above). Do not combine
 bypassed permissions with `apply` mode unless the only non-production orgs you are logged in to
 are ones you are happy to see changed without being asked.
 

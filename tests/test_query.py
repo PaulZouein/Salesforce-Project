@@ -65,9 +65,8 @@ def test_subquery_limit_is_checked_and_top_level_limit_still_added():
     assert text.endswith(") LIMIT 50")
 
 
-def test_limit_goes_before_offset_and_for_view():
+def test_limit_goes_before_offset_and_all_rows():
     assert limit("SELECT Id FROM Case ORDER BY Id OFFSET 20")[0] == "SELECT Id FROM Case ORDER BY Id LIMIT 50 OFFSET 20"
-    assert limit("SELECT Id FROM Case FOR VIEW")[0] == "SELECT Id FROM Case LIMIT 50 FOR VIEW"
     assert limit("SELECT Id FROM Case LIMIT 5 OFFSET 20")[0] == "SELECT Id FROM Case LIMIT 5 OFFSET 20"
     assert limit("SELECT Id FROM Case ALL ROWS")[0] == "SELECT Id FROM Case LIMIT 50 ALL ROWS"
 
@@ -111,6 +110,49 @@ def test_for_update_rejected(query):
     with pytest.raises(QueryValidationError) as err:
         limit(query)
     assert "locks" in err.value.message
+
+
+@pytest.mark.parametrize("query, clause", [
+    ("SELECT Id FROM Account LIMIT 5 FOR VIEW", "FOR VIEW"),
+    ("SELECT Id FROM Account for  reference", "FOR REFERENCE"),
+    ("SELECT Id FROM FAQ__kav WHERE PublishStatus = 'Online' UPDATE TRACKING", "UPDATE TRACKING"),
+    ("SELECT Id FROM FAQ__kav UPDATE VIEWSTAT", "UPDATE VIEWSTAT"),
+])
+def test_clauses_that_write_are_rejected(query, clause):
+    """Found by an independent review: these turn a read into a write (last-viewed dates, Knowledge statistics),
+    and the read-only tools run without approval, on production too."""
+    with pytest.raises(QueryValidationError) as err:
+        limit(query)
+    assert err.value.message.startswith(clause) and "changes the org" in err.value.message
+
+
+def test_the_words_inside_a_string_are_fine():
+    assert limit("SELECT Id FROM Case WHERE Subject = 'please update tracking for view'")[1] == 50
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT COUNT() FROM Case WHERE Priority = 'High'",
+    "SELECT COUNT(Id) FROM Case",
+    "SELECT COUNT(Id) total, MAX(CreatedDate) latest FROM Case",
+    "select sum(Amount) from Opportunity where IsClosed = true",
+])
+def test_a_single_row_aggregate_gets_no_limit(query):
+    """COUNT() with LIMIT 50 counts at most 50, and an aggregate without GROUP BY refuses LIMIT altogether."""
+    final, applied = limit(query)
+    assert final == query and applied == 0
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT Status, COUNT(Id) FROM Case GROUP BY Status",
+    "SELECT Id, (SELECT COUNT() FROM Cases) FROM Account",
+    "SELECT Id, Name FROM Account WHERE Name LIKE 'Count%'",
+])
+def test_queries_that_return_rows_still_get_the_limit(query):
+    assert limit(query) == (query + " LIMIT 50", 50)
+
+
+def test_a_limit_the_user_wrote_on_count_is_kept():
+    assert limit("SELECT COUNT() FROM Case LIMIT 10") == ("SELECT COUNT() FROM Case LIMIT 10", 10)
 
 
 @pytest.mark.parametrize("query", [

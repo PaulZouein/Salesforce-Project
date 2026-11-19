@@ -261,9 +261,34 @@ def test_flag_outside_the_allowlist_is_refused(args):
 DEPLOY = ["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org", "sbx"]
 
 
-def write_permit(target="sbx", uses=1, classification="sandbox"):
+def write_permit(target="sbx", uses=1, classification="sandbox", username=None):
     return _issue_permit(kind=KIND_WRITE, target=target, org_id="00D", classification=classification,
-                         operation="test", uses=uses)
+                         operation="test", uses=uses, username=username)
+
+
+def test_a_permitted_command_reaches_the_username_that_was_checked():
+    """Found by two independent reviews: the permit used to bind the alias text, and an alias pointed at
+    production between the check and the write sent the write to production."""
+    runner = RecordingRunner([{"status": 0, "result": {}}])
+    cli_with(runner).run(["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org", "sbx"],
+                         permit=write_permit("sbx", username="admin@test.example.com.sbx"))
+    (argv,) = runner.calls
+    assert argv[argv.index("--target-org") + 1] == "admin@test.example.com.sbx"
+
+
+@pytest.mark.parametrize("args", [
+    ["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org", "sbx", "--target-org", "prod"],
+    ["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org=sbx"],
+    ["project", "deploy", "start", "--metadata", "ApexClass:A", "-o", "sbx"],
+    ["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org", "sbx", "-o", "prod"],
+    ["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org", "sbx", "--targetusername=prod"],
+    ["project", "deploy", "start", "--metadata", "ApexClass:A", "--target-org", "sbx", "-u", "prod"],
+])
+def test_a_permitted_command_names_its_org_exactly_once(args):
+    runner = RecordingRunner()
+    with pytest.raises(WritePermitError) as err:
+        cli_with(runner).run(args, permit=write_permit("sbx", username="admin@test.example.com.sbx"))
+    assert "exactly once" in err.value.message and runner.calls == []
 
 
 def test_write_without_permit_never_reaches_the_runner():

@@ -62,18 +62,25 @@ def analyze_log(text: str) -> dict[str, Any]:
     in_limits = False
     event_total = 0
 
+    # Limits are counted per namespace: the org's own code is "(default)", and each managed package has its own
+    # section with its own limits. Keyed by name only, a package's section used to overwrite the org's.
+    limits_by_namespace: dict[str, dict[str, dict[str, int]]] = {}
+    namespace = "(default)"
     for number, raw in enumerate(lines, start=1):
         match = _LINE_RE.match(raw)
         if not match:
             if in_limits:
                 limit = _LIMIT_RE.match(raw)
                 if limit:
-                    limits[limit.group(1).strip()] = {"used": int(limit.group(2)), "limit": int(limit.group(3))}
+                    limits_by_namespace.setdefault(namespace, {})[limit.group(1).strip()] = {
+                        "used": int(limit.group(2)), "limit": int(limit.group(3))}
             continue
         event_total += 1
         _, nanos, event, details = match.groups()
         in_limits = event in ("LIMIT_USAGE_FOR_NS", "CUMULATIVE_LIMIT_USAGE")
         parts = details.split("|")
+        if event == "LIMIT_USAGE_FOR_NS":
+            namespace = (parts[0].strip() if parts and parts[0].strip() else "(default)")
 
         if event == "CODE_UNIT_STARTED":
             name = parts[-1] if parts else details
@@ -188,11 +195,16 @@ def analyze_log(text: str) -> dict[str, Any]:
                 f"The DML statement at Apex source line {source} ran {count} times in this transaction "
                 "(possible DML inside a loop)."
             )
+    # "limits" stays the org's own code's, as before; every namespace is checked against its own limits.
+    limits.update(limits_by_namespace.get("(default)") or next(iter(limits_by_namespace.values()), {}))
     near_limits = {}
-    for name, value in limits.items():
-        if value["limit"] and value["used"] / value["limit"] >= 0.8:
-            near_limits[name] = value
-            observations.append(f"Governor limit '{name}' reached {value['used']} of {value['limit']}.")
+    for space, values in limits_by_namespace.items():
+        for name, value in values.items():
+            if value["limit"] and value["used"] / value["limit"] >= 0.8:
+                label = name if space == "(default)" else f"{name} ({space})"
+                near_limits[label] = value
+                observations.append(f"Governor limit '{name}' reached {value['used']} of {value['limit']}"
+                                    + ("." if space == "(default)" else f" in the {space} package."))
     repeated = {}
     for trig in triggers:
         key = f"{trig['trigger']} {trig['event']}"
@@ -219,6 +231,7 @@ def analyze_log(text: str) -> dict[str, Any]:
         "soql": {"count": len(soql), "queries": _cap(soql)},
         "user_debug": {"count": len(user_debug), "messages": user_debug[:60]},
         "limits": limits,
+        "limits_by_namespace": limits_by_namespace,
         "limits_at_or_above_80_percent": near_limits,
         "code_units": _cap(code_units),
         "apex_statements": {
@@ -236,8 +249,19 @@ def analyze_log(text: str) -> dict[str, Any]:
             ),
         },
     }
+    from .logs import TRUNCATION_WARNING, is_truncated
+
+    if is_truncated(lines):
+        # Lines were removed from anywhere in the log: nothing may be concluded from a line being absent.
+        out["truncated"] = True
+        out["warning"] = TRUNCATION_WARNING
+        out["apex_statements"]["note"] = (
+            "This log was truncated by Salesforce: a line that is absent may still have run. Only lines that are "
+            "present can be cited.")
     if event_total == 0:
         out["note"] = "No log events were recognized. Is this an Apex debug log?"
+    elif not observations and out.get("truncated"):
+        out["note"] = "Nothing stood out in what remains of this truncated log; it is incomplete, see the warning."
     elif not observations:
         out["note"] = (
             "Nothing stood out automatically. That is not proof the transaction was healthy: check that "
@@ -245,4 +269,17 @@ def analyze_log(text: str) -> dict[str, Any]:
         )
     if "APEX_CODE,NONE" in header or "APEX_CODE,ERROR" in header:
         out["debug_level_warning"] = "Apex logging was off or errors-only in this log; method-level detail is missing."
-    return out
+    return _masked(out)
+
+
+def _masked(value: Any) -> Any:
+    """Every text taken from the log, with e-mail addresses and usernames masked (the file itself is untouched)."""
+    from .logs import mask_emails
+
+    if isinstance(value, str):
+        return mask_emails(value)
+    if isinstance(value, list):
+        return [_masked(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _masked(item) for key, item in value.items()}
+    return value

@@ -31,13 +31,22 @@ PERSONAL_FIELD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-#: Objects whose ``Name`` is a person's name.
-PERSON_OBJECTS = frozenset({"contact", "lead", "user", "personaccount", "individual", "employee"})
+#: Objects whose ``Name`` is a person's name. "Name" is the type Salesforce gives the record behind a
+#: polymorphic lookup (Owner, Who, What: a user, a queue, a contact...), so it may be a person too.
+PERSON_OBJECTS = frozenset({"contact", "lead", "user", "individual", "employee", "name"})
+#: Relationships whose ``Name`` is usually a person's: what an aggregate grouped by ``Owner.Name`` returns.
+PERSON_RELATIONSHIPS = frozenset({"owner", "createdby", "lastmodifiedby", "who", "contact", "lead", "user",
+                                  "manager", "delegatedapprover", "assignee", "requester"})
 
 _API_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$")
-_FORBIDDEN_CLAUSE = re.compile(r"\bFOR\s+UPDATE\b", re.IGNORECASE)
+#: Clauses that make a "read" change the org: FOR UPDATE locks records; FOR VIEW and FOR REFERENCE update the
+#: records' last-viewed and last-referenced dates and the recently-viewed list; UPDATE TRACKING and UPDATE
+#: VIEWSTAT write Knowledge article statistics. A read-only tool runs without approval, on production too.
+_FORBIDDEN_CLAUSE = re.compile(r"\b(FOR\s+(UPDATE|VIEW|REFERENCE)|UPDATE\s+(TRACKING|VIEWSTAT))\b", re.IGNORECASE)
+#: Aggregate functions: a query of only aggregates without GROUP BY returns one row (or, for COUNT(), a count).
+_AGGREGATE_RE = re.compile(r"\b(COUNT|COUNT_DISTINCT|SUM|AVG|MIN|MAX)\s*\(", re.IGNORECASE)
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)\b", re.IGNORECASE)
-_TAIL_CLAUSE_RE = re.compile(r"\b(OFFSET\s+\d+|FOR\s+(VIEW|REFERENCE)|ALL\s+ROWS)\b", re.IGNORECASE)
+_TAIL_CLAUSE_RE = re.compile(r"\b(OFFSET\s+\d+|ALL\s+ROWS)\b", re.IGNORECASE)
 
 
 def soql_literal(value: str) -> str:
@@ -82,6 +91,31 @@ def _mask_top_level(query: str) -> str:
     return "".join(out)
 
 
+def _single_row(text: str, masked: str) -> bool:
+    """Whether the query selects only aggregates (COUNT() included) and has no GROUP BY: one row, no LIMIT."""
+    if re.search(r"\bGROUP\s+BY\b", masked, re.IGNORECASE):
+        return False
+    head = re.match(r"^\s*SELECT\s+", masked, re.IGNORECASE)
+    found = re.search(r"\bFROM\b", masked[head.end():], re.IGNORECASE) if head else None
+    if not found:
+        return False
+    # The select list of the original text, split at top-level commas (masked keeps positions).
+    start, end = head.end(), head.end() + found.start()
+    items, depth, current = [], 0, ""
+    for ch_original, ch_masked in zip(text[start:end], masked[start:end]):
+        if ch_original == "(":
+            depth += 1
+        elif ch_original == ")":
+            depth -= 1
+        if ch_original == "," and depth == 0 and ch_masked == ",":
+            items.append(current)
+            current = ""
+        else:
+            current += ch_original
+    items.append(current)
+    return all(_AGGREGATE_RE.match(item.strip()) for item in items if item.strip())
+
+
 def enforce_limit(query: str, *, default_limit: int, max_limit: int, requested_limit: int | None = None) -> tuple[str, int]:
     """Validate ``query`` and return it with a top-level ``LIMIT`` no greater than ``max_limit``."""
     if not isinstance(query, str) or not query.strip():
@@ -94,8 +128,14 @@ def enforce_limit(query: str, *, default_limit: int, max_limit: int, requested_l
         raise QueryValidationError("Only one statement is allowed.")
     if not re.match(r"^\s*SELECT\b", masked, re.IGNORECASE):
         raise QueryValidationError("Only SELECT queries are allowed.", hint="This tool reads data; it never changes it.")
-    if _FORBIDDEN_CLAUSE.search(masked):
-        raise QueryValidationError("FOR UPDATE is not allowed: it locks records.")
+    without_literals = re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
+    forbidden = _FORBIDDEN_CLAUSE.search(without_literals)
+    if forbidden:
+        clause = " ".join(forbidden.group(0).upper().split())
+        raise QueryValidationError(
+            f"{clause} is not allowed: it changes the org (FOR UPDATE locks records; FOR VIEW and FOR REFERENCE "
+            "update the last-viewed or last-referenced dates; UPDATE TRACKING and UPDATE VIEWSTAT write Knowledge "
+            "statistics).", hint="Remove the clause. This tool only reads.")
     if requested_limit is not None:
         if isinstance(requested_limit, bool) or not isinstance(requested_limit, int) or requested_limit < 1:
             raise RowLimitError("limit must be a positive integer.")
@@ -130,6 +170,10 @@ def enforce_limit(query: str, *, default_limit: int, max_limit: int, requested_l
             return text, requested_limit
         return text, found
 
+    if _single_row(text, masked):
+        # COUNT() would be capped at the limit, and an aggregate without GROUP BY refuses LIMIT; both return one
+        # row. 0 means that no limit applies.
+        return text, 0
     applied = requested_limit if requested_limit is not None else default_limit
     applied = min(applied, max_limit)
     tail = _TAIL_CLAUSE_RE.search(masked)
@@ -144,14 +188,19 @@ def enforce_limit(query: str, *, default_limit: int, max_limit: int, requested_l
 
 
 class Redactor:
-    """Replaces the values of personal-data fields in query results."""
+    """Replaces the values of personal-data fields in query results.
 
-    def __init__(self, extra_fields: Iterable[str] = (), reveal_fields: Iterable[str] = ()):
+    ``query``, when given, lets it tell what each column of an aggregate query holds: such rows name their
+    columns by alias or ``expr0``, ``expr1``…, not by field.
+    """
+
+    def __init__(self, extra_fields: Iterable[str] = (), reveal_fields: Iterable[str] = (), query: str | None = None):
         self.extra = {f.lower() for f in extra_fields}
         self.reveal = {f.lower() for f in reveal_fields}
         self.redacted: set[str] = set()
+        self.columns, self.from_object = _aggregate_columns(query) if query else ({}, None)
 
-    def _should_redact(self, field: str, path: str, object_type: str | None) -> bool:
+    def _should_redact(self, field: str, path: str, object_type: str | None, *, person: bool = False) -> bool:
         name, full = field.lower(), path.lower()
         if name in self.reveal or full in self.reveal:
             return False
@@ -159,11 +208,27 @@ class Redactor:
             return True
         if PERSONAL_FIELD_PATTERN.search(field):
             return True
-        if name == "name" and object_type and object_type.lower() in PERSON_OBJECTS:
+        if name == "name" and (person or (object_type and object_type.lower() in PERSON_OBJECTS)):
             return True
         if name in ("username", "communitynickname", "alias") and object_type and object_type.lower() == "user":
             return True
+        if object_type == "AggregateResult":
+            return self._personal_column(name)
         return False
+
+    def _personal_column(self, column: str) -> bool:
+        """Whether an aggregate row's column holds personal data, from the expression it came from."""
+        source = self.columns.get(column)
+        if source is None:
+            return column == "name"           # not understood: a "Name" column is treated as a person's name
+        parts = source.split(".")
+        if PERSONAL_FIELD_PATTERN.search(parts[-1]):
+            return True
+        if parts[-1].lower() != "name":
+            return False
+        if len(parts) > 1:
+            return parts[-2].lower() in PERSON_RELATIONSHIPS or parts[-2].lower().endswith("__r")
+        return (self.from_object or "").lower() in PERSON_OBJECTS
 
     def record(self, record: Any, prefix: str = "") -> Any:
         if isinstance(record, list):
@@ -172,6 +237,8 @@ class Redactor:
             return record
         attributes = record.get("attributes")
         object_type = attributes.get("type") if isinstance(attributes, dict) else None
+        # A person account is an Account whose Name is a person's name.
+        person = object_type == "Account" and record.get("IsPersonAccount") is True
         out: dict[str, Any] = {}
         for key, value in record.items():
             if key == "attributes":
@@ -184,18 +251,65 @@ class Redactor:
                         "totalSize": value.get("totalSize"),
                         "records": self.record(value["records"], f"{path}."),
                     }
-                elif self._should_redact(key, path, object_type):
+                elif self._should_redact(key, path, object_type, person=person):
                     # Compound fields such as addresses.
                     self.redacted.add(path)
                     out[key] = REDACTED
                 else:
                     out[key] = self.record(value, f"{path}.")
-            elif value is not None and self._should_redact(key, path, object_type):
+            elif value is not None and self._should_redact(key, path, object_type, person=person):
                 self.redacted.add(path)
                 out[key] = REDACTED
             else:
                 out[key] = value
         return out
+
+
+def _select_items(text: str, masked: str) -> list[str]:
+    """The items of the top-level select list of ``text``, split at top-level commas."""
+    head = re.match(r"^\s*SELECT\s+", masked, re.IGNORECASE)
+    found = re.search(r"\bFROM\b", masked[head.end():], re.IGNORECASE) if head else None
+    if not found:
+        return []
+    start, end = head.end(), head.end() + found.start()
+    items, depth, current = [], 0, ""
+    for ch in text[start:end]:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            items.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    items.append(current.strip())
+    return [item for item in items if item]
+
+
+def _aggregate_columns(query: str) -> tuple[dict[str, str], str | None]:
+    """``({column: source expression}, FROM object)`` for an aggregate query's rows.
+
+    Salesforce names an aggregate row's columns by alias, by ``expr0``, ``expr1``… for unaliased aggregates in
+    order, and by the field's own name (its last part) for grouped fields.
+    """
+    try:
+        masked = _mask_top_level(query)
+    except QueryValidationError:
+        return {}, None
+    columns: dict[str, str] = {}
+    unnamed = 0
+    for item in _select_items(query, masked):
+        function = re.match(r"^(\w+)\s*\((.*)\)\s*(\w+)?$", item, re.DOTALL)
+        if function and _AGGREGATE_RE.match(item):
+            alias = function.group(3)
+            if not alias:
+                alias, unnamed = f"expr{unnamed}", unnamed + 1
+            columns[alias.lower()] = function.group(2).strip()
+        else:
+            parts = item.split()
+            path = re.sub(r"^\w+\s*\((.*)\)$", r"\1", parts[0]) if parts else ""
+            alias = parts[1] if len(parts) > 1 else path.split(".")[-1]
+            columns[alias.lower()] = path
+    found = re.search(r"\bFROM\s+(\w+)", masked, re.IGNORECASE)
+    return columns, (found.group(1) if found else None)
 
 
 def strip_attributes(record: Any) -> Any:
@@ -268,25 +382,25 @@ def run_query(
     raw_records = raw_records if isinstance(raw_records, list) else []
     total_size = result.get("totalSize") if isinstance(result, dict) else None
 
-    shown = Redactor(redact_fields, reveal_fields)
+    shown = Redactor(redact_fields, reveal_fields, query=final_query)
     records = shown.record(raw_records)
     out: dict[str, Any] = {
         "query": final_query,
         "api": "tooling" if tooling else "data",
-        "applied_limit": applied_limit,
+        "applied_limit": applied_limit or None,
         "total_size": total_size,
         "returned": len(records),
         "redacted_fields": sorted(shown.redacted),
         "records": records,
     }
-    if isinstance(total_size, int) and total_size >= applied_limit:
+    if applied_limit and isinstance(total_size, int) and total_size >= applied_limit:
         out["note"] = (
             f"The result reached the limit of {applied_limit} rows; more rows may exist. "
             "Narrow the WHERE clause rather than raising the limit."
         )
 
     if workspace is not None and ticket_key:
-        stored = Redactor(redact_fields, ())  # reveal_fields never apply to files on disk
+        stored = Redactor(redact_fields, (), query=final_query)  # reveal_fields never apply to files on disk
         stored_records = stored.record(raw_records)
         now = datetime.now(timezone.utc)
         name = f"{now.strftime('%Y%m%d-%H%M%S')}-{slugify(save_as or ('tooling' if tooling else 'soql'), 'query')}.json"

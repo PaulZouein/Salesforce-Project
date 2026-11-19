@@ -151,14 +151,28 @@ _CITATION_RE = re.compile(
     r"(?::(\d+)(?:-(\d+))?)?`"
 )
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
-_PHONE_RE = re.compile(r"(?<![\w.\-])\+?\d(?:[\s().\-]?\d){8,13}(?![\w\-])")
+#: Phone numbers, with an optional country code and an optional area code in parentheses: "+44 20 7946 0958",
+#: "(415) 555-0132", "+1 (415) 555-0132". Dates, case numbers without separators and versions are filtered below.
+_PHONE_RE = re.compile(r"(?<![\w.\-])(?:\+\d{1,3}[\s.\-]?)?(?:\(\d{1,4}\)\s?)?\d(?:[\s.\-]{0,2}\d){6,12}(?![\w\-])")
 _SPECULATION_RE = re.compile(
     r"\b(probably|likely|might|may be|maybe|seems|appears to|i think|i believe|possibly|presumably|"
     r"should be|could be|most likely)\b",
     re.IGNORECASE,
 )
 _PLACEHOLDER_RE = re.compile(r"\bTODO\b|\bTBD\b|<[A-Za-z][^<>|`\n]{2,80}>")
-_ALLOWED_EMAIL_DOMAINS = ("example.com", "example.org", "noreply", "localhost", "invalid")
+#: Addresses that cannot belong to a person: the reserved example domains (and their subdomains), and system
+#: mailboxes. Not ".invalid": a sandbox refresh appends it to real users' addresses. Not ".test" either: the
+#: simulated orgs use it for their customers' addresses, which stand for real people's.
+_RESERVED_EMAIL_DOMAINS = ("example.com", "example.org", "example.net")
+_RESERVED_EMAIL_TLDS = (".example", ".localhost")
+_SYSTEM_MAILBOXES = frozenset({"noreply", "no-reply", "donotreply", "do-not-reply"})
+
+
+def _not_a_person(address: str) -> bool:
+    local, _, domain = address.lower().rpartition("@")
+    if local in _SYSTEM_MAILBOXES or domain == "localhost" or domain.endswith(_RESERVED_EMAIL_TLDS):
+        return True
+    return any(domain == d or domain.endswith("." + d) for d in _RESERVED_EMAIL_DOMAINS)
 
 
 # --- Ticket scaffolding -----------------------------------------------------------------
@@ -273,8 +287,7 @@ def _personal_data(lines: list[str]) -> tuple[list[dict[str, Any]], list[dict[st
         if line.strip().startswith("```"):
             in_code = not in_code
         for match in _EMAIL_RE.finditer(line):
-            value = match.group(0)
-            if any(part in value.lower() for part in _ALLOWED_EMAIL_DOMAINS):
+            if _not_a_person(match.group(0)):
                 continue
             emails.append({"line": number, "kind": "email address"})
         if in_code:
@@ -282,8 +295,8 @@ def _personal_data(lines: list[str]) -> tuple[list[dict[str, Any]], list[dict[st
         for match in _PHONE_RE.finditer(line):
             value = match.group(0)
             digits = re.sub(r"\D", "", value)
-            if re.match(r"^\d{4}[\-.]\d{2}[\-.]\d{2}", value) or len(digits) > 13:
-                continue
+            if re.match(r"^\d{4}[\-.]\d{2}[\-.]\d{2}", value) or len(digits) > 13 or len(digits) < 9:
+                continue  # a date, a long number, or too short for a phone number (a line range like 1200-1234)
             if not re.search(r"[\s().\-+]", value) and len(digits) < 10:
                 continue
             phones.append({"line": number, "kind": "possible phone number"})
@@ -540,12 +553,19 @@ ul,ol{padding-left:24px}li{margin:3px 0}
 """
 
 
+#: A link target as it reads after escaping: http(s), then URL characters only. Quotes are escaped to entities
+#: that this does not accept, so a link can never close its href and add attributes; "&" may appear only as
+#: "&amp;" (a query string).
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://(?:[A-Za-z0-9\-._~:/?#\[\]@!$%+,;=]|&amp;)+)\)")
+
+
 def _inline(text: str) -> str:
-    out = html.escape(text, quote=False)
+    """Inline Markdown to HTML. Report text comes from tickets and orgs: everything is escaped, quotes included."""
+    out = html.escape(text, quote=True)
     out = re.sub(r"`([^`]+)`", lambda m: f"<code>{m.group(1)}</code>", out)
     out = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", out)
     out = re.sub(r"(?<![\w*])\*([^*\s][^*]*)\*(?![\w*])", r"<em>\1</em>", out)
-    out = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', out)
+    out = _LINK_RE.sub(r'<a href="\2" rel="noopener noreferrer">\1</a>', out)
     return out
 
 

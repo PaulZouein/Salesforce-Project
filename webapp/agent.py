@@ -54,8 +54,8 @@ MAX_EVENTS = 2000
 BUILTIN_ALLOWED = ("Read", "Glob", "Grep", "Skill", "Task", "Agent", "TodoWrite", "ToolSearch")
 #: Removed from an unattended investigation, on top of the org write tools: no shell, no web.
 BUILTIN_REFUSED = ("Bash", "WebFetch", "WebSearch")
-#: The only Claude Code tools an unattended investigation has at all (``--tools``). Write and Edit
-#: write the ticket's folder (accepted by the permission mode); ToolSearch loads the investigator's tools.
+#: The only Claude Code tools an unattended investigation has at all (``--tools``). Write and Edit may
+#: write only under tickets/ (WRITABLE); ToolSearch loads the investigator's tools.
 BUILTIN_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep", "ToolSearch", "Skill", "Task", "Agent", "TodoWrite")
 #: Model names offered on the page. Empty means "whatever Claude Code uses by default".
 MODEL_CHOICES = {"": "Claude Code's default", "sonnet": "Sonnet: faster, uses less", "opus": "Opus: most thorough"}
@@ -64,6 +64,11 @@ ECONOMY_MODEL = "sonnet"
 ECONOMY_EFFORT = "medium"
 ECONOMY_REFUSED = ("Task", "Agent")  # subagents start a fresh context and re-read what the main run has read
 ECONOMY_CACHE_TTL = "5m"  # Claude Code's CLAUDE_CODE_PROMPT_CACHE_TTL; on a subscription it uses "1h" by default
+#: Where an unattended investigation may write files: the tickets' folders, nothing else. An ``Edit(...)`` rule
+#: covers every file-writing tool (Write included); checked with Claude Code 2.1.326. With the "dontAsk" mode,
+#: a write anywhere else (the safety code in core/, the settings, CLAUDE.md) is refused without asking.
+WRITABLE = "Edit(tickets/**)"
+PERMISSION_MODE = "dontAsk"
 
 #: What each tool call means, in words a non-developer can follow.
 TOOL_LABELS = {
@@ -148,11 +153,11 @@ def build_command(executable: str, root: Path, model: str | None = None, *, econ
                   budget_usd: float | None = None) -> list[str]:
     """The exact command line of an unattended investigation. The module text says what each part is for."""
     allowed, refused = tool_permissions(economy=economy)
-    command = [executable, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+    command = [executable, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", PERMISSION_MODE]
     server_config = Path(root) / ".mcp.json"
     if server_config.is_file():
         command += ["--mcp-config", str(server_config), "--strict-mcp-config"]
-    command += ["--allowedTools", ",".join(allowed), "--disallowedTools", ",".join(refused)]
+    command += ["--allowedTools", ",".join(allowed + [WRITABLE]), "--disallowedTools", ",".join(refused)]
     given = [name for name in BUILTIN_TOOLS if name not in BUILTIN_REFUSED
              and not (economy and (name in ECONOMY_REFUSED or name == "Skill"))]
     command += ["--tools", ",".join(given)]

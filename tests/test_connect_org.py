@@ -35,6 +35,8 @@ class LoginRunner:
             "accessToken": "00D!secret-access", "refreshToken": TOKEN}}), "")
 
     def __call__(self, argv, cwd, timeout, env, *, input_text=None):
+        if list(argv[1:3]) == ["org", "list"]:     # the page first checks whether the name is already in use
+            return ProcessResult(0, json.dumps({"status": 0, "result": {"other": [{"alias": "taken", "username": "t@x.example"}]}}), "")
         self.calls.append({"argv": list(argv), "input": input_text, "env": env})
         if isinstance(self.result, BaseException):
             raise self.result
@@ -136,6 +138,22 @@ def test_unreadable_output_and_timeouts_carry_no_secret():
     with pytest.raises(SfCliTimeoutError) as caught:
         SfCli(executable="sf-test", runner=LoginRunner(TimeoutError())).connect_with_auth_url("my-dev", URL, timeout=5)
     assert HOST in caught.value.message and TOKEN not in _shown(caught.value.to_dict())
+
+
+def test_a_token_cut_by_the_length_limit_leaves_nothing_behind():
+    """Found by an independent review: output was cut to 600 characters before the token was removed, so a cut
+    through the token left part of it in the error the page shows."""
+    for pad in range(0, 700, 37):
+        noisy = ("x" * pad) + f" while using {URL} " + ("y" * (560 - len(TOKEN) // 2))
+        runner = LoginRunner(ProcessResult(1, noisy, noisy))
+        with pytest.raises(SfCliOutputError) as caught:
+            SfCli(executable="sf-test", runner=runner).connect_with_auth_url("my-dev", URL)
+        shown = _shown(caught.value.to_dict())
+        assert not any(TOKEN[i:i + 12] in shown for i in range(0, len(TOKEN) - 12)), pad
+    runner = LoginRunner(ProcessResult(1, json.dumps({"status": 1, "name": f"Bad {TOKEN}", "message": "no"}), ""))
+    with pytest.raises(SfCliError) as caught:
+        SfCli(executable="sf-test", runner=runner).connect_with_auth_url("my-dev", URL)
+    assert TOKEN not in _shown(caught.value.to_dict())
 
 
 def test_the_default_runner_writes_standard_input(tmp_path):
@@ -253,7 +271,7 @@ def test_the_start_command_refuses_a_bad_allowed_name(capsys):
 
 
 def test_the_page_offers_the_paste_option_and_asks_relative_addresses():
-    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    page = "".join((STATIC / name).read_text(encoding="utf-8") for name in ("index.html", "app.js"))
     assert "Paste an authorization instead" in page and 'type="password" id="auth-url"' in page
     assert "sf org auth show-sfdx-auth-url --target-org" in page
     assert 'fetch(path.replace(/^\\//, ""), init)' in page

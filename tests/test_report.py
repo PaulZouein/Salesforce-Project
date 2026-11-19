@@ -306,7 +306,7 @@ def test_markdown_subset():
     assert "<ol>\n<li>one</li>\n<li>two</li>\n</ol>" in html
     assert "<li><strong>b</strong> and <em>c</em></li>" in html
     assert "<blockquote><p>quote</p></blockquote>" in html and "<hr>" in html
-    assert '<a href="https://example.com/a">link</a>' in html
+    assert '<a href="https://example.com/a" rel="noopener noreferrer">link</a>' in html
     assert "hidden" not in html and "<p>text</p>" in html
     assert markdown_to_html("> **Note.** one\n> two\n> three\n\nafter") == \
         "<blockquote><p><strong>Note.</strong> one two three</p></blockquote>\n<p>after</p>"

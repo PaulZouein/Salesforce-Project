@@ -27,6 +27,7 @@ from .config import MODE_APPLY, Settings, load_settings
 from .errors import (
     DeveloperEditionWriteBlockedError,
     GuardError,
+    InputValidationError,
     ProductionTestRunBlockedError,
     ProductionWriteBlockedError,
     SfInvestigatorError,
@@ -44,6 +45,16 @@ DEVELOPER_EDITION = "Developer Edition"
 ORGANIZATION_QUERY = (
     "SELECT Id, Name, IsSandbox, OrganizationType, InstanceName, TrialExpirationDate FROM Organization LIMIT 1"
 )
+
+
+def _usable_username(value: Any) -> str | None:
+    """A username from ``org display`` that can name the org on a command line, or ``None``."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return validate_target_org(value)
+    except InputValidationError:
+        return None
 
 
 def classify_org(is_sandbox: Any, organization_type: Any, is_scratch: bool = False) -> str:
@@ -137,7 +148,9 @@ class OrgGuard:
         org_id: str | None = display.get("id")
         reason: str
         try:
-            record = self._query_organization(target)
+            # Asked through the username "org display" just resolved, so the classification is about the same
+            # org as the username a write permit is bound to, even if the alias is pointed elsewhere meanwhile.
+            record = self._query_organization(_usable_username(display.get("username")) or target)
         except SfInvestigatorError as exc:
             record = None
             reason = f"The Organization record could not be read ({exc.message}); treated as production."
@@ -228,6 +241,7 @@ class OrgGuard:
 
         try:
             self._check_write(info, operation, diagnostic)
+            username = self._bound_username(info)
         except GuardError as exc:
             self._log(operation, OUTCOME_BLOCKED, info, target, ticket_key=ticket_key, approved_by=approved_by,
                       detail={"reason": exc.message, "code": exc.code})
@@ -240,10 +254,23 @@ class OrgGuard:
             classification=info.classification,
             operation=operation,
             uses=commands,
+            username=username,
         )
         self._log(operation, OUTCOME_ALLOWED, info, target, ticket_key=ticket_key, approved_by=approved_by,
                   detail={"commands": commands, "diagnostic": diagnostic})
         return permit, info
+
+    @staticmethod
+    def _bound_username(info: OrgInfo) -> str:
+        """The username a permit is bound to. Without one, the write cannot be tied to the org that was checked."""
+        username = _usable_username(info.username)
+        if not username:
+            raise ProductionWriteBlockedError(
+                f"The username of {info.target!r} could not be read, so a change could not be tied to the org that "
+                "was checked; it is refused as if the org were production.",
+                hint="Check the org with 'sf org display' in your terminal, or connect it again.",
+            )
+        return username
 
     def _check_write(self, info: OrgInfo, operation: str, diagnostic: bool) -> None:
         if info.classification == CLASS_PRODUCTION:
@@ -311,6 +338,12 @@ class OrgGuard:
                     f"{target!r} is production. Use run_apex_tests_on_production, which asks for approval each time.",
                 )
 
+        try:
+            username = self._bound_username(info)
+        except GuardError as exc:
+            self._log(operation, OUTCOME_BLOCKED, info, target, ticket_key=ticket_key, approved_by=approved_by,
+                      detail={"reason": exc.message, "code": exc.code})
+            raise
         permit = _issue_permit(
             kind=KIND_TEST,
             target=target,
@@ -318,6 +351,7 @@ class OrgGuard:
             classification=info.classification,
             operation=operation,
             uses=1,
+            username=username,
         )
         self._log(operation, OUTCOME_ALLOWED, info, target, ticket_key=ticket_key, approved_by=approved_by,
                   detail={"production_confirmed": production_confirmed})

@@ -447,7 +447,11 @@ def test_agent_run_starts_claude_code_unattended_and_reports_progress(web, fake_
     from mcp_server import server
     call = json.loads(fake_claude.read_text(encoding="utf-8"))
     args = call["args"]
-    assert args[:6] == ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+    # Nobody is there to answer a prompt: anything not pre-approved is refused ("dontAsk"), and files may be
+    # written only under tickets/. Before, "acceptEdits" let a run steered by ticket text edit core/org_guard.py.
+    assert args[:6] == ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk"]
+    assert "Edit(tickets/**)" in args[args.index("--allowedTools") + 1].split(",")
+    assert not {"Edit", "Write"} & set(args[args.index("--allowedTools") + 1].split(","))
     # The prompt travels on standard input, never on the command line.
     assert "new ticket, DEMO-101" in call["prompt"] and "DEMO-101" not in " ".join(args)
     assert Path(call["cwd"]).resolve() == project.root.resolve()

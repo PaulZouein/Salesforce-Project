@@ -201,6 +201,8 @@ def test_stored_html_is_the_export_of_the_stored_report(demo, project):
     inv, _ = demo
     install_expected(project.ticket(KEY))
     inv.export_report_html(KEY)
+    if os.environ.get("SFTI_UPDATE_EXPECTED") == "1":   # after a deliberate change to the HTML export
+        shutil.copyfile(project.ticket(KEY) / "report.html", EXPECTED / "report.html")
 
     def body(text: str) -> str:
         text = re.sub(r"queries/\d{8}-\d{6}-", "queries/<ts>-", text)
