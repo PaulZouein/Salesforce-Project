@@ -14,7 +14,7 @@ and macOS**.
 [![A real investigation: the ticket arrives as a PDF, Claude Code investigates while the cost is shown live, the root cause is confirmed with its evidence, and the fix is one keyword](docs/demo/teaser.gif)](docs/demo/real-investigation.mp4)
 
 *A real investigation on the simulated demo orgs: from the ticket to a confirmed root cause in 82
-seconds, for about $0.29 at API prices. Click the picture for the whole run (2 minutes).*
+seconds, for about $0.29 at API prices. Click the picture for the whole run, narrated (2 minutes, with sound).*
 
 ## Try it in five minutes
 

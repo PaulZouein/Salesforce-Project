@@ -10,6 +10,10 @@ Windows and macOS the page shows the command for your system.
 [`docs/demo/ticket-investigator-demo.mp4`](demo/ticket-investigator-demo.mp4). The part where
 the investigation runs is shown faster; everything else is real time.
 
+**A narrated demo of a real investigation (2 minutes, with sound):**
+[`docs/demo/real-investigation.mp4`](demo/real-investigation.mp4): the ticket arrives as a PDF,
+Claude Code investigates live, and the root cause is confirmed in 82 seconds.
+
 To follow along on your own computer: double-click `start-demo.bat` (Windows) or
 `start-demo.command` (macOS). [`QUICKSTART.md`](../QUICKSTART.md) has what you need installed.
 
