@@ -329,10 +329,22 @@ def agent_prompt(request: dict[str, Any], *, resume: bool = False) -> str:
     """
     key = request["key"]
     sandbox = request.get("sandbox")
+    from_page = request.get("source") == "web"  # a ticket started in Claude Code has no original text file
+    if from_page:
+        opening = [
+            (f"Ticket {key} was submitted through the web interface and has already been worked on. Continue it."
+             if resume else f"A new ticket, {key}, was submitted through the web interface."),
+            f"Its full original text is in tickets/{key}/attachments/{ORIGINAL_NAME}. Read all of it, comments "
+            "included.",
+        ]
+    else:
+        opening = [
+            f"Ticket {key} was started in a Claude Code session and is now continued from the web interface.",
+            f"What intake recorded is in tickets/{key}/ticket.md (the ticket as it was given, with its summary and "
+            "ambiguities). Read all of it.",
+        ]
     lines = [
-        (f"Ticket {key} was submitted through the web interface and has already been worked on. Continue it."
-         if resume else f"A new ticket, {key}, was submitted through the web interface."),
-        f"Its full original text is in tickets/{key}/attachments/{ORIGINAL_NAME}. Read all of it, comments included.",
+        *opening,
         *([f"The ticket was given as a PDF, tickets/{key}/attachments/{ORIGINAL_PDF_NAME}; the text file holds what "
            "could be read from it. Open the PDF itself for anything the text loses or lacks (tables, screenshots, "
            "a scanned page)."] if request.get("pdf") else []),

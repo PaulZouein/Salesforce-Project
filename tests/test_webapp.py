@@ -449,7 +449,8 @@ def test_a_ticket_started_in_claude_code_can_be_continued_from_the_page(web, fak
     detail = web.wait_until_finished("DEMO-101", timeout=60)
     assert detail["run"]["status"] == "finished"
     call = json.loads(fake_claude.read_text(encoding="utf-8"))
-    assert "Ticket DEMO-101" in call["prompt"] or "ticket, DEMO-101" in call["prompt"]
+    assert "Ticket DEMO-101 was started in a Claude Code session" in call["prompt"]
+    assert "tickets/DEMO-101/ticket.md" in call["prompt"] and "ticket-original.txt" not in call["prompt"]
     assert "Org to investigate: demo-prod." in call["prompt"]
     assert web.get("/api/tickets/DEMO-101")[1]["prompt"]  # the page can show the prompt now that the org is known
 
