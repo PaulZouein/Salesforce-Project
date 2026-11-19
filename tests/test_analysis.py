@@ -185,6 +185,16 @@ def test_recent_org_changes(inv, sim):
     assert not any(u["Name"] in text or u["Username"] in text for u in sim.records("prod")["User"])
 
 
+def test_recent_org_changes_does_not_call_failed_sources_no_changes(inv, sim):
+    records = sim.records("prod")
+    for name in ("SetupAuditTrail", "ApexClass", "ApexTrigger", "Flow", "ValidationRule"):
+        records.pop(name, None)
+    (sim.org_dir("prod") / "records.json").write_text(json.dumps(records))
+    out = inv.recent_org_changes("prod", "2026-10-01")
+    assert "No changes recorded" not in out["note"] and "Every source failed" in out["note"]
+    assert out["counts"] == {} and "error" in out["apex_classes"]
+
+
 def test_recent_org_changes_window_filter_and_errors(inv, sim):
     wide = inv.recent_org_changes("prod", "2026-10-01", until="2026-10-31")
     assert [t["section"] for t in wide["setup_audit_trail"]] == ["Flows"]
@@ -292,6 +302,20 @@ def test_find_dependencies_direction_type_and_validation(inv):
         name = kwargs.pop("name")
         with pytest.raises(InputValidationError):
             inv.find_dependencies("prod", name, **kwargs)
+
+
+def test_a_name_shared_by_two_components_is_flagged(inv, sim):
+    """A field is stored without its object: Account's and Case's Support_Tier__c are both 'Support_Tier'."""
+    records = sim.records("prod")
+    records["MetadataComponentDependency"].append({
+        "MetadataComponentId": "01pWs000001OtherIAO", "MetadataComponentName": "CaseRouting",
+        "MetadataComponentType": "ApexClass", "RefMetadataComponentId": "00NWs000002CaseTier",
+        "RefMetadataComponentName": "Support_Tier", "RefMetadataComponentType": "CustomField"})
+    (sim.org_dir("prod") / "records.json").write_text(json.dumps(records))
+    out = inv.find_dependencies("prod", "Support_Tier", direction="used_by")
+    assert len(out["matched_components"]) == 2 and "merged" in out["same_name_warning"]
+    single = inv.find_dependencies("prod", "CaseTriggerHandler", direction="used_by")
+    assert "same_name_warning" not in single and "matched_components" not in single
 
 
 def test_dependency_query_has_no_order_by(project):

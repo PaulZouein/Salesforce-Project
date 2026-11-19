@@ -30,6 +30,7 @@ from .errors import (
     InputValidationError,
     ProductionTestRunBlockedError,
     ProductionWriteBlockedError,
+    SfCliError,
     SfInvestigatorError,
     WriteModeDisabledError,
 )
@@ -43,7 +44,8 @@ CLASS_DEVELOPER = "developer"
 DEVELOPER_EDITION = "Developer Edition"
 
 ORGANIZATION_QUERY = (
-    "SELECT Id, Name, IsSandbox, OrganizationType, InstanceName, TrialExpirationDate FROM Organization LIMIT 1"
+    "SELECT Id, Name, IsSandbox, OrganizationType, InstanceName, TrialExpirationDate, NamespacePrefix "
+    "FROM Organization LIMIT 1"
 )
 
 
@@ -83,6 +85,7 @@ class OrgInfo:
     classification: str
     writes_allowed: bool
     classification_reason: str
+    namespace_prefix: str | None = None  # set on the Developer Edition org that holds a managed package's source
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -138,13 +141,20 @@ class OrgGuard:
     def org_info(self, target: str) -> OrgInfo:
         """Describe and classify one org. Fails closed to ``production``."""
         validate_target_org(target)
-        display = self._cli.run(["org", "display", "--target-org", target], timeout=120) or {}
-        is_scratch = bool(display.get("devHubId") or display.get("expirationDate"))
+        display_error: SfCliError | None = None
+        try:
+            display = self._cli.run(["org", "display", "--target-org", target], timeout=120) or {}
+        except SfCliError as exc:
+            # For a scratch org, "org display" also asks its Dev Hub and fails when that hub is not connected
+            # here. If the org itself answers below, it is classified from its own record, without a username.
+            display, display_error = {}, exc
 
         is_sandbox: bool | None = None
         org_type: str | None = None
         name: str | None = None
         instance_name: str | None = None
+        namespace: str | None = None
+        trial_expiration: Any = None
         org_id: str | None = display.get("id")
         reason: str
         try:
@@ -152,6 +162,8 @@ class OrgGuard:
             # org as the username a write permit is bound to, even if the alias is pointed elsewhere meanwhile.
             record = self._query_organization(_usable_username(display.get("username")) or target)
         except SfInvestigatorError as exc:
+            if display_error is not None:
+                raise display_error from exc
             record = None
             reason = f"The Organization record could not be read ({exc.message}); treated as production."
         else:
@@ -164,15 +176,27 @@ class OrgGuard:
                 name = record.get("Name")
                 instance_name = record.get("InstanceName")
                 org_id = record.get("Id") or org_id
+                namespace = str(record.get("NamespacePrefix") or "").strip() or None
+                trial_expiration = record.get("TrialExpirationDate")
                 reason = f"IsSandbox = {raw!r}, OrganizationType = {org_type!r}"
                 if is_sandbox is None:
                     reason += "; IsSandbox is not a boolean, treated as production."
 
+        # The CLI's own rule: a scratch org is a sandbox with a trial expiration date.
+        is_scratch = bool(display.get("devHubId") or display.get("expirationDate")) or (
+            is_sandbox is True and bool(trial_expiration))
         classification = classify_org(is_sandbox, org_type, is_scratch)
         settings = self._settings()
         writes_allowed = classification in (CLASS_SANDBOX, CLASS_SCRATCH) or (
-            classification == CLASS_DEVELOPER and settings.allow_developer_edition_writes
+            classification == CLASS_DEVELOPER and settings.allow_developer_edition_writes and not namespace
         )
+        if classification == CLASS_DEVELOPER and namespace:
+            reason += (f"; NamespacePrefix = {namespace!r}: this Developer Edition org holds a managed package's "
+                       "source, so it is read-only")
+        if display_error is not None:
+            writes_allowed = False
+            reason += (f"; 'org display' failed ({display_error.message[:200]}), so the username is unknown and "
+                       "changes are refused")
         return OrgInfo(
             target=target,
             username=display.get("username"),
@@ -189,6 +213,7 @@ class OrgGuard:
             classification=classification,
             writes_allowed=writes_allowed,
             classification_reason=reason,
+            namespace_prefix=namespace,
         )
 
     def _query_organization(self, target: str) -> dict[str, Any] | None:
@@ -280,6 +305,13 @@ class OrgGuard:
                 hint="Reproduce and fix in a sandbox. This block cannot be overridden.",
             )
         settings = self._settings()
+        if info.classification == CLASS_DEVELOPER and info.namespace_prefix:
+            raise DeveloperEditionWriteBlockedError(
+                f"'{operation}' was refused: {info.target!r} is a Developer Edition org with the namespace "
+                f"{info.namespace_prefix!r}. It holds a managed package's source, the original every release is "
+                "built from, so it is read-only whatever the settings say.",
+                hint="Reproduce and fix in a scratch org or a sandbox.",
+            )
         if info.classification == CLASS_DEVELOPER and not settings.allow_developer_edition_writes:
             raise DeveloperEditionWriteBlockedError(
                 f"'{operation}' was refused: {info.target!r} is a Developer Edition org, which reports "

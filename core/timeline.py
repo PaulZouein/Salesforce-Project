@@ -120,12 +120,23 @@ def recent_org_changes(
         out[key] = rows
 
     counts = {k: len(v) for k, v in out.items() if isinstance(v, list)}
+    failed = sorted(k for k, v in out.items() if isinstance(v, dict) and "error" in v)
     out["counts"] = counts
     out["how_to_use"] = (
         "Compare these timestamps with when the ticket says the problem started. A change shortly before "
         "the first failure is a strong lead, but it is still a hypothesis until the component itself is read."
     )
-    if not any(counts.values()):
+    if failed and not counts:
+        out["note"] = (
+            "Every source failed, so nothing is known about changes in this window: this is not an answer of "
+            "'no changes'. Read the errors above."
+        )
+    elif failed:
+        out["note"] = (
+            f"{len(failed)} source(s) failed ({', '.join(failed)}): changes there are unknown, not absent. "
+            + ("The other sources recorded no change in this window." if not any(counts.values()) else "")
+        ).strip()
+    elif not any(counts.values()):
         out["note"] = (
             "No changes recorded in this window. The setup audit trail keeps 180 days; data loads and "
             "permission changes made through the API may not appear here."

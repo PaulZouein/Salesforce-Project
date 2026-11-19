@@ -116,6 +116,51 @@ def test_org_info_fails_closed(response, fragment):
     assert fragment in info.classification_reason
 
 
+def test_a_scratch_org_is_recognised_from_its_own_record():
+    """The CLI's rule: a sandbox with a trial expiration date is a scratch org, whatever org display says."""
+    info = OrgGuard(fake_cli(org_row(IsSandbox=True, OrganizationType="Developer Edition",
+                                     TrialExpirationDate="2026-12-01T00:00:00.000+0000"))).org_info("x")
+    assert info.classification == "scratch" and info.is_scratch is True and info.writes_allowed is True
+
+
+def display_fails_runner(organization_response, error_name="NoScratchInfoError"):
+    """``org display`` of a scratch org whose Dev Hub is not connected here fails; the org may still answer."""
+
+    def runner(argv, cwd, timeout, env):
+        if argv[1:3] == ["org", "display"]:
+            return ProcessResult(1, json.dumps({"status": 1, "name": error_name,
+                                                "message": "Could not find the scratch org information."}), "")
+        return ProcessResult(int(organization_response.get("status", 0)), json.dumps(organization_response), "")
+
+    return SfCli(executable="sf-test", runner=runner)
+
+
+def test_a_scratch_org_whose_dev_hub_is_not_connected_is_classified_but_not_writable():
+    info = OrgGuard(display_fails_runner(org_row(
+        IsSandbox=True, OrganizationType="Developer Edition",
+        TrialExpirationDate="2026-12-01T00:00:00.000+0000"))).org_info("x")
+    assert info.classification == "scratch" and info.username is None
+    assert info.writes_allowed is False and "'org display' failed" in info.classification_reason
+
+
+def test_an_org_that_cannot_be_reached_at_all_is_still_an_error():
+    cli = display_fails_runner({"status": 1, "name": "NamedOrgNotFoundError", "message": "No authorization found."},
+                               error_name="NamedOrgNotFoundError")
+    with pytest.raises(SfCliError) as caught:
+        OrgGuard(cli).org_info("typo")
+    assert caught.value.name == "NamedOrgNotFoundError"
+
+
+def test_a_developer_org_that_holds_a_package_namespace_is_read_only_even_when_opted_in():
+    guard = OrgGuard(fake_cli(org_row(IsSandbox=False, OrganizationType="Developer Edition", NamespacePrefix="acme")),
+                     settings_provider=lambda: Settings(mode="apply", allow_developer_edition_writes=True))
+    info = guard.org_info("x")
+    assert info.classification == "developer" and info.writes_allowed is False and info.namespace_prefix == "acme"
+    with pytest.raises(DeveloperEditionWriteBlockedError) as caught:
+        guard.authorize_write("x", "deploy_component")
+    assert "managed package" in caught.value.message
+
+
 # --- authorize_write --------------------------------------------------------------------
 
 

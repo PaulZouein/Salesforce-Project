@@ -307,6 +307,28 @@ def test_verify_reports_removed_components_and_types_it_cannot_check(inv, sim):
     assert "retrieve it to compare" in out["components"]["CustomField:Account.Support_Tier__c"]["reason"]
 
 
+def test_a_flow_is_asked_for_by_name_and_a_deactivated_flow_is_not_reported_as_missing(inv, sim):
+    """A large org has more active flows than one page of an unfiltered query; deactivating is not deleting."""
+    inv.retrieve_components("prod", "T-1", COMPONENTS)
+    records = sim.records("prod")
+    others = range(250)  # listed first: an unfiltered "LIMIT 200" never reaches the remembered flow
+    records["FlowDefinitionView"] = [
+        {"Id": f"300Ws0000Oth{n:04d}AA", "ApiName": f"Other_Flow_{n}", "IsActive": True,
+         "ActiveVersionId": f"301Ws0000Oth{n:04d}AA"} for n in others] + records["FlowDefinitionView"]
+    records["Flow"] = [
+        {"Id": f"301Ws0000Oth{n:04d}AA", "Definition": {"DeveloperName": f"Other_Flow_{n}"}, "VersionNumber": 1,
+         "Status": "Active", "LastModifiedDate": "2026-01-01T00:00:00.000+0000"} for n in others] + records["Flow"]
+    (sim.org_dir("prod") / "records.json").write_text(json.dumps(records))
+    assert inv.verify_org_knowledge("prod")["components"]["Flow:Case_Premium_Notification"]["status"] == "unchanged"
+
+    for row in records["FlowDefinitionView"]:
+        if row["ApiName"] == "Case_Premium_Notification":
+            row.update(IsActive=False, ActiveVersionId=None)
+    (sim.org_dir("prod") / "records.json").write_text(json.dumps(records))
+    entry = inv.verify_org_knowledge("prod")["components"]["Flow:Case_Premium_Notification"]
+    assert entry["status"] == "changed" and entry["active"] is False and "deactivated" in entry["reason"]
+
+
 def test_verify_when_the_org_cannot_be_asked(inv, sim):
     learn(inv)
     records = sim.records("prod")
@@ -363,8 +385,9 @@ def test_memory_holds_no_record_data(inv, sim, project):
 
 def test_knowledge_folder_is_never_committed(inv, project):
     assert "knowledge/" in (ROOT / ".gitignore").read_text().splitlines()
-    ignored = subprocess.run(["git", "check-ignore", "-q", "knowledge/00DWs000000PrdA.json"], cwd=ROOT)
-    assert ignored.returncode == 0
+    if (ROOT / ".git").exists():  # an unpacked release has the .gitignore but is not a checkout
+        ignored = subprocess.run(["git", "check-ignore", "-q", "knowledge/00DWs000000PrdA.json"], cwd=ROOT)
+        assert ignored.returncode == 0
     with pytest.raises(InputValidationError):
         OrgKnowledge(project.root).load("../../etc/passwd")
 

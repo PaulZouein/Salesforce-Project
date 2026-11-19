@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from .errors import InputValidationError, WorkspaceError
+from .errors import InputValidationError, SfCliError, WorkspaceError
 from .sf_cli import SfCli, validate_target_org
 from .workspace import Workspace
 
@@ -103,6 +103,34 @@ def _relative_to_repo(repo_path: Path, file_path: str) -> str | None:
         return None
 
 
+def _raise_unless_retrieved(result: dict[str, Any], wait_minutes: int) -> None:
+    """A retrieve that failed in the org still exits 0 with ``--json``: it must not look like an empty one.
+
+    The CLI answers ``{status: 'Failed', success: false, errorStatusCode, errorMessage, files: []}``
+    (plugin-deploy-retrieve, ``project retrieve start``: the throw is only in the human-readable mode).
+    Taken for "nothing to retrieve", it would disable a deploy's snapshot and its drift check.
+    """
+    status = str(result.get("status") or "")
+    # A component that does not exist is a Failed file entry under the status Succeeded: not an error here.
+    if status == "Succeeded" or (not status and result.get("success") is not False):
+        return
+    if status in ("Pending", "InProgress"):
+        raise SfCliError(
+            f"The retrieve was still running in the org when the wait of {wait_minutes} minute(s) ran out.",
+            name="RetrieveNotFinished",
+            command="project retrieve start",
+            hint="Nothing was saved. Retrieve again with a longer wait_minutes.",
+        )
+    code = str(result.get("errorStatusCode") or "").strip()
+    reason = str(result.get("errorMessage") or "").strip() or f"the org reported the status {status or 'unknown'}"
+    raise SfCliError(
+        f"The retrieve failed{f' ({code})' if code else ''}: {reason[:500]}",
+        name="RetrieveFailed",
+        command="project retrieve start",
+        hint="Nothing was saved. Check the component names and your access to them, then retrieve again.",
+    )
+
+
 def run_retrieve(cli: SfCli, org: str, repo_path: Path, components: Sequence[str], wait_minutes: int) -> dict[str, Any]:
     """Run ``sf project retrieve start`` in ``repo_path`` and normalize the result."""
     args = ["project", "retrieve", "start"]
@@ -111,6 +139,7 @@ def run_retrieve(cli: SfCli, org: str, repo_path: Path, components: Sequence[str
     args += ["--target-org", org, "--wait", str(wait_minutes), "--ignore-conflicts"]
     envelope = cli.run_envelope(args, cwd=repo_path, timeout=wait_minutes * 60 + 60)
     result = envelope.get("result") or {}
+    _raise_unless_retrieved(result, wait_minutes)
     files: list[dict[str, Any]] = []
     for f in result.get("files") or []:
         if not isinstance(f, dict):
@@ -184,8 +213,8 @@ def retrieve_components(
         out["warnings"] = retrieved["warnings"]
     if not paths:
         out["note"] = (
-            "Nothing was retrieved. Check the type and name spelling; a component that does not exist "
-            "in the org is reported under problems or warnings."
+            "Nothing was retrieved. Check the type and name spelling: a component that does not exist "
+            "in the org is listed under files with the state Failed, and under problems."
         )
     if saved_local:
         out["local_edits_saved_in_commit"] = saved_local

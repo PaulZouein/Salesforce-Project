@@ -184,6 +184,16 @@ def test_confirmed_cause_without_any_evidence_fails(ticket):
     assert any("cites no artifact" in p for p in out["problems"])
 
 
+def test_a_ruled_out_hypothesis_does_not_unconfirm_the_header(ticket):
+    """The header row decides the status: 'not confirmed' about another hypothesis must not lift the rule."""
+    text = GOOD_REPORT.split("## Evidence")[0] + "## Evidence\n\nNone collected.\n\n## Root cause\n\n" \
+        "The loop returns too early. The flow hypothesis was not confirmed.\n\n## Fix\n\nx\n\n" \
+        "## Test results\n\nx\n\n## Risks\n\nx\n\n## Open questions\n\nx\n"
+    out = ticket(text)
+    assert out["ok"] is False and out["root_cause_status"] == "confirmed"
+    assert any("cites no artifact" in p for p in out["problems"])
+
+
 def test_confirmed_cause_that_does_not_reference_its_evidence_fails(ticket):
     out = ticket(**{"(E1)": "", "(E2)": ""})
     assert out["ok"] is False

@@ -393,9 +393,12 @@ them: rule 8 in `CLAUDE.md` says the assistant drafts and you post.
 | "That org is not authenticated on this machine" | `sf org login web --alias <alias>` in your terminal, then `list_orgs`. |
 | A sandbox is reported as production | The classification failed closed. `org_info` shows the reason: the Organization record could not be read, or `IsSandbox` was not a boolean. Check the user's access to the Organization object and re-authenticate. |
 | `write_mode_disabled` | The tool is in advise mode. Set `"mode": "apply"` in `sfti.config.json` yourself if you want it to deploy. |
-| `developer_edition_write_blocked` | Set `"allow_developer_edition_writes": true` yourself. |
+| `developer_edition_write_blocked` | Set `"allow_developer_edition_writes": true` yourself. A Developer Edition org with a namespace (the org that holds a managed package's source) stays read-only whatever the setting says. |
 | `production_write_blocked` | Final. Reproduce and fix in a sandbox. |
 | `org_drift` on deploy | The org's version changed since it was retrieved. The current version is now committed in `tickets/<KEY>/metadata/` and your edit is still in the working tree. Review the difference, then deploy again. |
+| `deploy_in_progress` | The deploy was still running in the org when the wait ran out, so it may still change the org. It is recorded as `in_progress`. Do not deploy again yet: check **Setup > Deployment Status**. Once it has finished, `rollback_change` can undo it: it reads the components from the org first, and does nothing while the org still holds the version from before. |
+| `deploy_failed`: "Nothing was deployed: the org's current version could not be retrieved first" | The snapshot a rollback would need could not be taken, so the deploy stopped before changing anything. Retry when the retrieve works again. |
+| A rollback "did not complete" | It can be called again for the same change: a change whose rollback failed stays eligible. |
 | "contains characters that cmd.exe interprets" (Windows) | An argument contains one of `& | < > ^ % " !`. Usually the project path. Move the project to a path without those characters. |
 | A query is rejected for its `LIMIT` | Narrow the `WHERE` clause; raise `max_row_limit` only if you must. |
 | The hook blocks an innocent command | See the known false positive above. Rephrase the command, or run it yourself. |

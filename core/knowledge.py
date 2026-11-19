@@ -652,6 +652,14 @@ class OrgKnowledge:
             elif spec not in current:
                 entry.update(status=MISSING, reason="The org no longer has a component with this name.")
                 changed_specs.append(spec)
+            elif current[spec] is None and component_type == "Flow":
+                if remembered:
+                    entry.update(status=CHANGED, active=False,
+                                 reason="The flow is still in the org but no version of it is active any more: it "
+                                 "was deactivated after it was learned. Retrieve and read it again.")
+                    changed_specs.append(spec)
+                else:
+                    entry.update(status=UNKNOWN, active=False, reason="The flow is in the org but has no active version.")
             elif not remembered:
                 entry.update(status=UNKNOWN, org_last_modified=current[spec],
                              reason="No last-modified date was stored when it was learned; retrieve it to compare.")
@@ -796,18 +804,29 @@ def fetch_last_modified(cli: SfCli, org: str, component_type: str, names: Sequen
         chunk = names[start:start + 100]
         listed = ", ".join(soql_literal(n) for n in chunk)
         if component_type in ("ApexClass", "ApexTrigger"):
+            # NamespacePrefix = null: a managed package's class of the same name is another component.
             rows = strip_attributes(run_raw_query(
-                cli, org, f"SELECT Name, LastModifiedDate FROM {component_type} WHERE Name IN ({listed}) LIMIT 200",
-                tooling=True))
+                cli, org, f"SELECT Name, LastModifiedDate FROM {component_type} WHERE Name IN ({listed}) "
+                          "AND NamespacePrefix = null LIMIT 200", tooling=True))
             for row in rows:
                 out[spec_of(component_type, row.get("Name"))] = row.get("LastModifiedDate")
         elif component_type == "Flow":
-            rows = strip_attributes(run_raw_query(
-                cli, org, "SELECT Definition.DeveloperName, VersionNumber, LastModifiedDate FROM Flow "
-                          "WHERE Status = 'Active' LIMIT 200", tooling=True))
-            wanted = set(chunk)
-            for row in rows:
-                name = (row.get("Definition") or {}).get("DeveloperName")
-                if name in wanted:
-                    out[spec_of("Flow", name)] = row.get("LastModifiedDate")
+            # Asked by name: an org can have far more active flows than one page of an unfiltered query.
+            definitions = strip_attributes(run_raw_query(
+                cli, org, f"SELECT ApiName, ActiveVersionId FROM FlowDefinitionView WHERE ApiName IN ({listed}) "
+                          "AND NamespacePrefix = null LIMIT 200"))
+            active = {str(r["ActiveVersionId"]): str(r.get("ApiName")) for r in definitions if r.get("ActiveVersionId")}
+            dates: dict[str, str | None] = {}
+            if active:
+                versions = strip_attributes(run_raw_query(
+                    cli, org, "SELECT Id, LastModifiedDate FROM Flow WHERE Id IN "
+                              f"({', '.join(soql_literal(i) for i in active)}) LIMIT 200", tooling=True))
+                for row in versions:
+                    name = active.get(str(row.get("Id"))) or active.get(next(
+                        (i for i in active if i[:15] == str(row.get("Id"))[:15]), ""))
+                    if name:
+                        dates[name] = row.get("LastModifiedDate")
+            for row in definitions:
+                # None: the flow is in the org but has no active version.
+                out[spec_of("Flow", row.get("ApiName"))] = dates.get(str(row.get("ApiName")))
     return out

@@ -144,3 +144,9 @@ class DriftError(ChangeError):
 
 class DeployFailedError(ChangeError):
     code = "deploy_failed"
+
+
+class DeployInProgressError(ChangeError):
+    """The deploy was still running in the org when the wait ran out: it may still change the org."""
+
+    code = "deploy_in_progress"

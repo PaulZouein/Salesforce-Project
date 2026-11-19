@@ -173,7 +173,7 @@ class Page:
         self.app = app
         self.server = create_server(app, 0)
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
 
     def call(self, method, path, body=None, headers=None, token=True):
         all_headers = {"Content-Type": "application/json", **(headers or {})}

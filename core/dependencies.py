@@ -35,6 +35,31 @@ def _sort_key(entry: dict[str, Any]) -> tuple[str, str]:
     return (str(entry.get("type") or ""), str(entry.get("name") or ""))
 
 
+def _flag_same_name(out: dict[str, Any], rows: list[dict[str, Any]], id_field: str, type_field: str) -> None:
+    """Say so when one name matched several components: their answers are merged in the lists.
+
+    A custom field is stored without its object and a validation rule name is unique only per
+    object, so ``Tier`` can be Account.Tier__c and Case.Tier__c; a managed package can also use
+    the same name. Each row carries the Id of the component it was matched on.
+    """
+    matched: dict[str, str] = {}
+    for row in rows:
+        if row.get(id_field):
+            matched.setdefault(str(row[id_field])[:15], str(row.get(type_field) or ""))
+    if len(matched) < 2:
+        return
+    found = out.setdefault("matched_components", [])
+    for component_id, component_type in sorted(matched.items()):
+        entry = {"id": component_id, "type": component_type}
+        if entry not in found:
+            found.append(entry)
+    out["same_name_warning"] = (
+        f"The name {out['component']!r} matched {len(found)} different components (Ids in matched_components), "
+        "for example fields of the same name on different objects or a managed package's component. Their "
+        "dependencies are merged in these lists: pass component_type, and confirm each one with search_metadata."
+    )
+
+
 def find_dependencies(
     cli: SfCli,
     org: str,
@@ -70,7 +95,7 @@ def find_dependencies(
                 cli,
                 org,
                 "SELECT MetadataComponentId, MetadataComponentName, MetadataComponentType, "
-                "RefMetadataComponentType FROM MetadataComponentDependency "
+                "RefMetadataComponentId, RefMetadataComponentType FROM MetadataComponentDependency "
                 f"WHERE {where} LIMIT {limit}",
                 tooling=True,
             )
@@ -86,6 +111,7 @@ def find_dependencies(
         out["used_by"].sort(key=_sort_key)
         if len(rows) >= limit:
             out["used_by_truncated"] = True
+        _flag_same_name(out, rows, "RefMetadataComponentId", "RefMetadataComponentType")
 
     if direction in ("uses", "both"):
         where = f"MetadataComponentName = {soql_literal(name)}"
@@ -96,7 +122,7 @@ def find_dependencies(
                 cli,
                 org,
                 "SELECT RefMetadataComponentId, RefMetadataComponentName, RefMetadataComponentType, "
-                "MetadataComponentType FROM MetadataComponentDependency "
+                "MetadataComponentId, MetadataComponentType FROM MetadataComponentDependency "
                 f"WHERE {where} LIMIT {limit}",
                 tooling=True,
             )
@@ -112,6 +138,7 @@ def find_dependencies(
         out["uses"].sort(key=_sort_key)
         if len(rows) >= limit:
             out["uses_truncated"] = True
+        _flag_same_name(out, rows, "MetadataComponentId", "MetadataComponentType")
 
     out["coverage_note"] = COVERAGE_NOTE
     return out

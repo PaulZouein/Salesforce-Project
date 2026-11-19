@@ -55,6 +55,7 @@ OUTCOME_ALLOWED = "allowed"
 OUTCOME_BLOCKED = "blocked"
 OUTCOME_SUCCEEDED = "succeeded"
 OUTCOME_FAILED = "failed"
+OUTCOME_IN_PROGRESS = "in_progress"  # a deploy still running in the org when the wait ran out
 
 
 def utc_now() -> str:

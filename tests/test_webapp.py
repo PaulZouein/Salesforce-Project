@@ -75,7 +75,7 @@ def web(project, tmp_path, monkeypatch):
     monkeypatch.delenv("SFTI_CLAUDE_EXECUTABLE", raising=False)
     app = App(root=project.root, demo=True, demo_state=tmp_path / "web-demo-state")
     server = create_server(app, 0)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     try:
         yield Client(app, server.server_address[1])
@@ -832,6 +832,7 @@ def test_a_run_is_metered_while_it_goes_and_kept_when_it_ends(web, fake_claude, 
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "hang")
     submit(web)
     assert web.get("/api/usage")[1]["running"] == [] and web.get("/api/usage")[1]["last"] is None
+    day = time.strftime("%Y-%m-%d")  # "today" is the local calendar day: a run across midnight is not today's
     web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
     deadline = time.time() + 30
     while time.time() < deadline:
@@ -839,6 +840,7 @@ def test_a_run_is_metered_while_it_goes_and_kept_when_it_ends(web, fake_claude, 
         if live["running"] and live["running"][0]["usage"]["responses"] == 2:
             break
         time.sleep(0.1)
+    assert live["running"] and live["running"][0]["usage"]["responses"] == 2, "the run was never metered"
     now = live["running"][0]
     assert now["key"] == "DEMO-101" and now["options"] == {"model": None, "economy": False, "budget_usd": None}
     # Two responses of the stand-in, at Sonnet 5.5 list prices: an estimate while it runs.
@@ -851,7 +853,9 @@ def test_a_run_is_metered_while_it_goes_and_kept_when_it_ends(web, fake_claude, 
     web.wait_until_finished("DEMO-101")
     after = web.get("/api/usage")[1]
     assert after["running"] == [] and after["last"]["key"] == "DEMO-101" and after["last"]["status"] == "cancelled"
-    assert after["today"]["runs"] == 1 and after["today"]["cost_usd"] == 0.0114 and "list prices" in after["note"]
+    assert "list prices" in after["note"]
+    if time.strftime("%Y-%m-%d") == day:
+        assert after["today"]["runs"] == 1 and after["today"]["cost_usd"] == 0.0114
 
 
 def test_a_finished_run_reports_claude_codes_own_total(web, fake_claude, project):

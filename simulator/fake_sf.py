@@ -380,17 +380,17 @@ def cmd_retrieve(flags: dict[str, Any]) -> dict[str, Any]:
     for spec in flags.get("--metadata") or []:
         matched = component_files(folder / "source", spec)
         if not matched:
+            # Like source-deploy-retrieve: a Failed file entry under the status Succeeded, and no warning.
             type_name, _, name = spec.partition(":")
-            messages.append({"fileName": "unpackaged/package.xml",
-                             "problem": f"Entity of type '{type_name}' named '{name or '*'}' cannot be found"})
+            problem = f"Entity of type '{type_name}' named '{name or '*'}' cannot be found"
+            messages.append({"fileName": "unpackaged/package.xml", "problem": problem})
+            files.append({"fullName": name or "*", "type": type_name, "state": "Failed", "error": problem,
+                          "problemType": "Error"})
         for type_name, full_name, path in matched:
             relative = path.relative_to(folder / "source")
             target = local / relative
             new_text = path.read_bytes()
-            if not target.exists():
-                state = "Created"
-            else:
-                state = "Unchanged" if target.read_bytes() == new_text else "Changed"
+            state = "Created" if not target.exists() else "Changed"  # a real retrieve never reports Unchanged
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(new_text)
             files.append({"fullName": full_name, "type": type_name, "state": state, "filePath": str(target)})
@@ -398,7 +398,7 @@ def cmd_retrieve(flags: dict[str, Any]) -> dict[str, Any]:
         "status": 0,
         "result": {"done": True, "status": "Succeeded", "success": True, "id": "09S" + uuid.uuid4().hex[:15],
                    "files": files, "messages": messages, "fileProperties": []},
-        "warnings": [m["problem"] for m in messages],
+        "warnings": [],
     }
 
 
@@ -573,7 +573,7 @@ def org_records(folder: Path, org: dict[str, Any]) -> dict[str, list[dict[str, A
         records["Organization"] = [{
             "Id": org.get("orgId"), "Name": org.get("name"), "IsSandbox": org.get("isSandbox"),
             "OrganizationType": org.get("organizationType"), "InstanceName": org.get("instanceName", "SIM1"),
-            "TrialExpirationDate": None,
+            "TrialExpirationDate": org.get("trialExpirationDate"), "NamespacePrefix": org.get("namespacePrefix"),
         }]
     return records
 
@@ -646,13 +646,14 @@ def cmd_get_log(flags: dict[str, Any]) -> dict[str, Any]:
     log_id = flags.get("--log-id", "")
     source = folder / "logs" / f"{log_id}.log"
     if not source.is_file():
-        return {"status": 0, "result": [], "warnings": []}
+        # plugin-apex asks /sobjects/ApexLog/<id>/Body, which answers 404 for a log that expired or was deleted.
+        raise CliError("NOT_FOUND", "The requested resource does not exist", 1)
     if flags.get("--output-dir"):
         target_dir = Path(flags["--output-dir"])
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"{log_id}.log"
         shutil.copyfile(source, target)
-        return {"status": 0, "result": [str(target)], "warnings": []}
+        return {"status": 0, "result": [source.read_text(encoding="utf-8")], "warnings": []}  # apex get log.js:72
     return {"status": 0, "result": [{"log": source.read_text(encoding="utf-8")}], "warnings": []}
 
 
@@ -682,7 +683,7 @@ def cmd_rest(positional: list[str], flags: dict[str, Any]) -> dict[str, Any]:
     method = flags.get("--method", "GET")
     match = re.match(r"^/?services/data/v[\d.]+/(tooling/)?sobjects/(\w+)(?:/(\w+))?$", url)
     if not match:
-        return {"status": 0, "result": {"statusCode": 404, "headers": {}, "body": [{"errorCode": "NOT_FOUND", "message": "The requested resource does not exist"}]}, "warnings": [], "_exit": 1}
+        return {"status": 1, "result": {"statusCode": 404, "headers": {}, "body": [{"errorCode": "NOT_FOUND", "message": "The requested resource does not exist"}]}, "warnings": [], "_exit": 1}
     object_name, record_id = match.group(2), match.group(3)
     body: dict[str, Any] = {}
     raw = flags.get("--body")
@@ -700,14 +701,14 @@ def cmd_rest(positional: list[str], flags: dict[str, Any]) -> dict[str, Any]:
     if method == "PATCH" and record_id:
         row = next((r for r in rows if str(r.get("Id"))[:15] == record_id[:15]), None)
         if row is None:
-            return {"status": 0, "result": {"statusCode": 404, "headers": {}, "body": [{"errorCode": "NOT_FOUND", "message": "Provided external ID field does not exist or is not accessible: " + record_id}]}, "warnings": [], "_exit": 1}
+            return {"status": 1, "result": {"statusCode": 404, "headers": {}, "body": [{"errorCode": "NOT_FOUND", "message": "Provided external ID field does not exist or is not accessible: " + record_id}]}, "warnings": [], "_exit": 1}
         for key in body:
             if key not in row and not key.endswith("__c") and object_name not in ("TraceFlag", "DebugLevel"):
-                return {"status": 0, "result": {"statusCode": 400, "headers": {}, "body": [{"errorCode": "INVALID_FIELD", "message": f"No such column '{key}' on sobject of type {object_name}"}]}, "warnings": [], "_exit": 1}
+                return {"status": 1, "result": {"statusCode": 400, "headers": {}, "body": [{"errorCode": "INVALID_FIELD", "message": f"No such column '{key}' on sobject of type {object_name}"}]}, "warnings": [], "_exit": 1}
         row.update(body)
         save_records(folder, records)
         return {"status": 0, "result": {"statusCode": 204, "headers": {}, "body": ""}, "warnings": []}
-    return {"status": 0, "result": {"statusCode": 405, "headers": {}, "body": [{"errorCode": "METHOD_NOT_ALLOWED", "message": f"HTTP Method '{method}' not allowed"}]}, "warnings": [], "_exit": 1}
+    return {"status": 1, "result": {"statusCode": 405, "headers": {}, "body": [{"errorCode": "METHOD_NOT_ALLOWED", "message": f"HTTP Method '{method}' not allowed"}]}, "warnings": [], "_exit": 1}
 
 
 def dispatch(argv: list[str]) -> dict[str, Any]:

@@ -168,7 +168,7 @@ def test_a_second_start_opens_the_copy_that_is_already_running(project, monkeypa
     app = App(root=project.root, demo=True, demo_state=tmp_path / "state")
     server = create_server(app, 0)
     port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     opened = []
     monkeypatch.setattr(entry, "open_browser", opened.append)
     monkeypatch.setattr(entry, "App", lambda **kw: pytest.fail("a second copy must not be started"))
@@ -198,7 +198,7 @@ def test_a_port_used_by_another_program_is_skipped_or_reported(monkeypatch, caps
 
     other = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Other)
     port = other.server_address[1]
-    threading.Thread(target=other.serve_forever, daemon=True).start()
+    threading.Thread(target=other.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     try:
         assert entry.running_copy(port) is None            # it answers, but it is not this page
         monkeypatch.setattr(entry, "App", lambda **kw: pytest.fail("nothing should start"))

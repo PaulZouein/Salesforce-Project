@@ -381,16 +381,28 @@ def validate_report(workspace: Workspace, ticket_key: str, filename: str = "repo
     status_match = re.search(r"root cause status\s*\|\s*([^|\n]+)", full_text, re.IGNORECASE)
     status = status_match.group(1).strip().lower() if status_match else ""
     root_text = "\n".join(lines[root[0] - 1: root[1] - 1]) if root else ""
-    not_confirmed = "not confirmed" in status or "not confirmed" in root_text.lower()
-    confirmed = not not_confirmed and ("confirmed" in status or bool(root))
+    if status_match:
+        # The header row decides. The section may well say "the flow hypothesis was not confirmed"
+        # about a hypothesis it ruled out, in a report whose root cause is confirmed.
+        not_confirmed = bool(re.search(r"\bnot\b|\bunconfirmed\b|\bunknown\b", status))
+        confirmed = not not_confirmed and "confirmed" in status
+    else:
+        not_confirmed = "not confirmed" in root_text.lower()
+        confirmed = not not_confirmed and bool(root)
 
     evidence_refs = len(re.findall(r"\bE\d+\b", root_text))
-    if root and confirmed:
+    if confirmed and not valid:
+        problems.append(
+            "The root cause is marked Confirmed but the report cites no artifact that exists in the ticket "
+            "folder. Cite a file and line, a saved query result or a log line, or mark the root cause as "
+            "Not confirmed."
+        )
+    elif root and confirmed:
         if citations_in(evidence) == 0 and citations_in(root) == 0:
             problems.append(
-                "The root cause is presented as confirmed but the report cites no artifact that exists in the "
-                "ticket folder. Cite a file and line, a saved query result or a log line, or mark the root "
-                "cause as Not confirmed."
+                "The root cause is presented as confirmed but its Evidence and Root cause sections cite no "
+                "artifact that exists in the ticket folder. Cite a file and line, a saved query result or a log "
+                "line, or mark the root cause as Not confirmed."
             )
         elif citations_in(root) == 0 and evidence_refs == 0:
             problems.append(

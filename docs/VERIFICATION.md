@@ -95,7 +95,7 @@ org connected:
 | `project deploy start` | `--metadata`, `--target-org`, `--test-level`, `--tests`, `--wait`, `--dry-run`, `--ignore-conflicts` | exit code set from the deploy status |
 | `project delete source` | `--metadata`, `--target-org`, `--no-prompt` | |
 | `apex run test` | `--class-names` (repeatable), `--result-format json`, `--code-coverage`, `--wait`, `--target-org` | exit code 100 on test failures |
-| `apex get log` | `--log-id`, `--output-dir`, `--target-org` | with `--output-dir` the JSON result is a list of file paths |
+| `apex get log` | `--log-id`, `--output-dir`, `--target-org` | with `--output-dir` the log is written to `<dir>/<id>.log` and the JSON result is the list of log texts (plugin-apex `apex/get/log.js`); a log that expired or was deleted is a 404 (`NOT_FOUND`) |
 | `apex run` | `--file`, `--target-org` | a compile or runtime failure throws, with the result in `data` |
 | `api request rest` | URL, `--method`, `--body @file`, `--target-org` | result `{statusCode, headers, body}`; exit code 1 when HTTP >= 400 |
 | `org login sfdx-url` | `--sfdx-url-stdin -`, `--alias`, `--json` | read from `@salesforce/plugin-auth` 6.0.5 and `@salesforce/core`: the value is read from standard input only; the URL's host is used for the token refresh and the user lookup, so only the org's own address must be reachable. `org login device` no longer exists in 2.158.7 |
