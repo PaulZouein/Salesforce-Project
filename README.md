@@ -97,7 +97,7 @@ against it, read-only, and can plant the sample bug there to investigate for rea
 | `CLAUDE.md` | The rules the assistant follows in this folder. |
 | `simulator/` | A stand-in for the `sf` executable backed by files, with three simulated orgs. It powers the tests and the demo. It does not execute Apex. |
 | `samples/` | A sample ticket (`DEMO-101`), the planted bug behind it, and the reports real investigations produced. |
-| `tests/` | 852 tests. They need no org and no Salesforce CLI. |
+| `tests/` | 881 tests. They need no org and no Salesforce CLI. |
 
 Each ticket gets its own folder, `tickets/<KEY>/`, which is never committed:
 
@@ -155,7 +155,7 @@ A file that cannot be read, or a value of the wrong type, falls back to the safe
 
 ## What has been verified, and what has not
 
-- **Verified:** the 852 tests on Windows and macOS in CI, through the real subprocess path,
+- **Verified:** the 881 tests on Windows and macOS in CI, through the real subprocess path,
   against the simulated orgs; every Salesforce CLI command, flag and result shape the tool uses,
   against the installed CLI 2.158.7 and its sources; complete AI investigations started from the
   page; the release zip setting itself up from nothing on Windows and macOS.

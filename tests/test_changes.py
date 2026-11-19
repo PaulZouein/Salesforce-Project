@@ -547,3 +547,19 @@ def test_audit_view_hides_stored_values(apply_inv):
                        reason="subject correction")
     text = json.dumps(inv.audit_entries(KEY)) + json.dumps(inv.list_changes(KEY))
     assert "sensitive subject text" not in text and "Demo case 3" not in text
+
+
+@pytest.mark.parametrize("read_back, written, same", [
+    ("2026-03-01T08:00:00.000+0000", "2026-03-01T08:00:00Z", True),
+    ("2026-03-01T09:00:00.000+0100", "2026-03-01T08:00:00Z", True),
+    ("2026-03-01T08:00:01.000+0000", "2026-03-01T08:00:00Z", False),
+    ("003Ws00000AbCdEFGH", "003Ws00000AbCdE", True),
+    ("003Ws00000AbCdXFGH", "003Ws00000AbCdE", False),
+    ("High", "Medium", False),
+    ("5.0", 5, True),
+])
+def test_values_read_back_are_compared_in_the_form_salesforce_stores_them(read_back, written, same):
+    """A datetime and a 15-character Id come back in another spelling: that is not automation changing them."""
+    from core.changes import _same_value
+
+    assert _same_value(read_back, written) is same

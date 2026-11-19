@@ -486,6 +486,18 @@ class Runner:
     # -- Claude Code -------------------------------------------------------------------------
 
     def _run_agent(self, run: Run, inv: Investigator) -> None:
+        try:
+            self._run_claude_code(run, inv)
+        except Exception as exc:  # noqa: BLE001 - a run must never stay "running" with nothing behind it
+            if run.status == "running":
+                run.add({"kind": "error", "label": "The investigation could not be run",
+                         "detail": f"{type(exc).__name__}: {str(getattr(exc, 'message', exc))[:500]}"})
+                if run.process and run.process.poll() is None:
+                    from core.sf_cli import _kill_tree
+                    _kill_tree(run.process)
+                run.finish("failed")
+
+    def _run_claude_code(self, run: Run, inv: Investigator) -> None:
         executable = find_claude()
         if not executable:
             run.add({"kind": "error", "label": "Claude Code was not found on this computer",
@@ -493,7 +505,7 @@ class Runner:
                                "shown on this page. The result appears here either way."})
             run.finish("failed")
             return
-        request = read_request(run.folder)
+        request = {**read_request(run.folder), "key": run.key}
         prompt = agent_prompt(request, resume=has_progress(run.folder))
         try:
             command = build_command(executable, self.root, chosen_model(request), economy=bool(request.get("economy")),

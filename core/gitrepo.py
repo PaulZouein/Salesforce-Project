@@ -20,6 +20,7 @@ _IDENTITY = [
     "-c", "core.autocrlf=false",
     "-c", "core.safecrlf=false",
     "-c", "core.quotepath=false",
+    "-c", "core.longpaths=true",  # Windows: deep metadata paths under a long project folder
 ]
 
 

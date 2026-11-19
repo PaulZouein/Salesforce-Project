@@ -212,3 +212,27 @@ def test_workspace_diff(inv, project):
     check = subprocess.run(["git", "apply", "--check", str(project.ticket("T-1") / "fix.diff")], cwd=repo,
                            capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
+
+
+@pytest.mark.parametrize("check, value", [
+    ("ticket", "ABC-123\n"), ("org", "sandbox\n"), ("component", "ApexClass:CaseService\n"),
+    ("record", "500Ws00000C0003IAA\n"), ("log", "07LWs00000L0001MAA\n"),
+])
+def test_a_trailing_newline_is_refused_by_the_input_checks(check, value):
+    """`$` also matches before a final newline: "ABC-123\\n" made a folder whose name ends in a line break."""
+    from core.errors import InputValidationError
+    from core.logs import _LOG_ID_RE
+    from core.metadata import validate_components
+    from core.sf_cli import validate_target_org
+    from core.timeline import _RECORD_ID_RE
+    from core.workspace import validate_ticket_key
+
+    if check in ("record", "log"):
+        assert not (_RECORD_ID_RE if check == "record" else _LOG_ID_RE).match(value)
+        assert (_RECORD_ID_RE if check == "record" else _LOG_ID_RE).match(value.strip())
+        return
+    validate = {"ticket": validate_ticket_key, "org": validate_target_org,
+                "component": lambda v: validate_components([v])}[check]
+    with pytest.raises(InputValidationError):
+        validate(value)
+    validate(value.strip())

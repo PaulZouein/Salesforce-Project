@@ -37,7 +37,7 @@ MAX_COMMENTS = 200
 FIELDS = "summary,description,status,priority,issuetype,created,updated,resolution,labels,components," \
          "environment,reporter,assignee,comment,attachment,issuelinks"
 
-_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,19}-\d{1,9}$")
+_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,19}-\d{1,9}\Z")
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _MENTION_RE = re.compile(r"\[~[^\]]+\]")
 

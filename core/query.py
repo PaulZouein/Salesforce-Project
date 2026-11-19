@@ -38,7 +38,7 @@ PERSON_OBJECTS = frozenset({"contact", "lead", "user", "individual", "employee",
 PERSON_RELATIONSHIPS = frozenset({"owner", "createdby", "lastmodifiedby", "who", "contact", "lead", "user",
                                   "manager", "delegatedapprover", "assignee", "requester"})
 
-_API_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$")
+_API_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*\Z")
 #: Clauses that make a "read" change the org: FOR UPDATE locks records; FOR VIEW and FOR REFERENCE update the
 #: records' last-viewed and last-referenced dates and the recently-viewed list; UPDATE TRACKING and UPDATE
 #: VIEWSTAT write Knowledge article statistics. A read-only tool runs without approval, on production too.

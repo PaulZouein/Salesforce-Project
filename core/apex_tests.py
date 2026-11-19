@@ -20,7 +20,7 @@ from .workspace import Workspace
 MAX_TEST_CLASSES = 20
 TEST_FAILURE_STATUS = 100
 
-_CLASS_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,79}(\.[A-Za-z][A-Za-z0-9_]{0,79})?$")
+_CLASS_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,79}(\.[A-Za-z][A-Za-z0-9_]{0,79})?\Z")
 
 
 def _condense(result: dict[str, Any], *, include_coverage: bool) -> dict[str, Any]:

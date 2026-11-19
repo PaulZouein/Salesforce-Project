@@ -59,9 +59,9 @@ CHANGED = "changed"
 MISSING = "not_found_in_org"
 UNKNOWN = "not_checked"
 
-_ORG_ID_RE = re.compile(r"^00D[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
+_ORG_ID_RE = re.compile(r"^00D[A-Za-z0-9]{12}([A-Za-z0-9]{3})?\Z")
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
-_SPEC_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9_.\-]+$")
+_SPEC_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9_.\-]+\Z")
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 _STOP_WORDS = frozenset(
     "the a an and or of to in on for is are was were be not with by at as it this that from when "
@@ -261,6 +261,17 @@ class OrgKnowledge:
                         hint="Try again in a moment. If it persists, delete the .lock file in the knowledge folder.",
                     ) from None
                 time.sleep(0.03)
+            except PermissionError:
+                if os.name != "nt":
+                    break  # a read-only folder: go on without a lock, as below
+                # Windows refuses to create a file that another program is still deleting ("delete pending"):
+                # the lock is busy, not impossible.
+                if time.monotonic() > deadline:
+                    raise WorkspaceError(
+                        "The org memory is being updated by another program and did not become free.",
+                        hint="Try again in a moment. If it persists, delete the .lock file in the knowledge folder.",
+                    ) from None
+                time.sleep(0.03)
             except OSError:
                 break  # a folder that cannot hold a lock file (read-only, odd file system): go on without one
             else:
@@ -304,9 +315,22 @@ class OrgKnowledge:
         now = utc_now()
         data["created_at"] = data.get("created_at") or now
         data["updated_at"] = now
-        temporary = path.with_suffix(f".{os.getpid()}.tmp")
+        # A name of its own for every save: threads of one program never share a temporary file.
+        temporary = path.with_suffix(f".{os.getpid()}-{uuid.uuid4().hex[:12]}.tmp")
         temporary.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(path)
+        try:
+            for attempt in range(40):
+                try:
+                    temporary.replace(path)
+                    break
+                except PermissionError:
+                    # Windows: the file cannot be replaced while another program has it open for a moment.
+                    if os.name != "nt" or attempt == 39:
+                        raise
+                    time.sleep(0.025)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
 
     def known_orgs(self) -> list[dict[str, Any]]:
         out = []
@@ -796,7 +820,7 @@ def _same_moment(a: str | None, b: str | None) -> bool:
 
 def fetch_last_modified(cli: SfCli, org: str, component_type: str, names: Sequence[str]) -> dict[str, str | None]:
     """Last-modified dates of components of one type, keyed by ``Type:Name``. Read-only."""
-    names = [n for n in dict.fromkeys(names) if re.match(r"^[A-Za-z0-9_]{1,80}$", n)]
+    names = [n for n in dict.fromkeys(names) if re.match(r"^[A-Za-z0-9_]{1,80}\Z", n)]
     out: dict[str, str | None] = {}
     if not names:
         return out

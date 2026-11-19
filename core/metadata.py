@@ -23,7 +23,7 @@ MAX_SEARCH_FILE_BYTES = 5 * 1024 * 1024
 MAX_LOG_FILE_BYTES = 30 * 1024 * 1024
 BASELINE_FILE = "sfti-baseline.json"
 
-_COMPONENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(:[A-Za-z0-9_.\-* ()/$@]+)?$")
+_COMPONENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(:[A-Za-z0-9_.\-* ()/$@]+)?\Z")
 
 SEARCH_SCOPES = {
     "metadata": "metadata",

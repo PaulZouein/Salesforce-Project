@@ -27,7 +27,7 @@ TICKETS_DIRNAME = "tickets"
 SUBDIRS = ("attachments", "metadata", "queries", "logs", "apex")
 PACKAGE_DIR = "force-app"
 
-_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$")
+_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}\Z")
 _SLUG_RE = re.compile(r"[^A-Za-z0-9_\-]+")
 
 METADATA_GITIGNORE = ".sf/\n.sfdx/\n*.log\n"
@@ -129,7 +129,7 @@ class Workspace:
                 "namespace": "",
                 "sfdcLoginUrl": "https://login.salesforce.com",
             }
-            if api_version and re.match(r"^\d{2,3}\.0$", api_version):
+            if api_version and re.match(r"^\d{2,3}\.0\Z", api_version):
                 project["sourceApiVersion"] = api_version
             project_file.write_text(json.dumps(project, indent=2) + "\n", encoding="utf-8")
         (path / PACKAGE_DIR / "main" / "default").mkdir(parents=True, exist_ok=True)

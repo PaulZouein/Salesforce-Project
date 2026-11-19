@@ -54,7 +54,7 @@ PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
 REPORT_CSP = ("sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; "
               "base-uri 'none'; form-action 'none'")
 _LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
-_HOST_NAME_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
+_HOST_NAME_RE = re.compile(r"^(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\Z")
 
 
 def check_allowed_host(name: Any) -> str:
@@ -371,13 +371,13 @@ class App:
         return {"key": ticket["key"], "text": "\n".join(lines)}
 
 
-_TICKET_ROUTE = re.compile(r"^/api/tickets/([^/]+)(?:/(run|cancel|events|note|attachments))?$")
-_ORG_ROUTE = re.compile(r"^/api/orgs/([^/]+)$")
-_MEMORY_ROUTE = re.compile(r"^/api/memory/(00D[A-Za-z0-9]{12,15})(?:/(verify|search))?$")
-_JIRA_ROUTE = re.compile(r"^/api/jira/([^/]+)$")
-_REPORT_ROUTE = re.compile(r"^/tickets/([^/]+)/report\.html$")
-_RESULT_ROUTE = re.compile(r"^/tickets/([^/]+)/result\.zip$")
-_PDF_ROUTE = re.compile(r"^/tickets/([^/]+)/ticket\.pdf$")
+_TICKET_ROUTE = re.compile(r"^/api/tickets/([^/]+)(?:/(run|cancel|events|note|attachments))?\Z")
+_ORG_ROUTE = re.compile(r"^/api/orgs/([^/]+)\Z")
+_MEMORY_ROUTE = re.compile(r"^/api/memory/(00D[A-Za-z0-9]{12,15})(?:/(verify|search))?\Z")
+_JIRA_ROUTE = re.compile(r"^/api/jira/([^/]+)\Z")
+_REPORT_ROUTE = re.compile(r"^/tickets/([^/]+)/report\.html\Z")
+_RESULT_ROUTE = re.compile(r"^/tickets/([^/]+)/result\.zip\Z")
+_PDF_ROUTE = re.compile(r"^/tickets/([^/]+)/ticket\.pdf\Z")
 
 
 def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
@@ -599,6 +599,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     if app.runner.is_running(key):
                         raise WorkspaceError("This ticket is already being investigated.")
                     folder = inv().workspace.ticket_dir(key)
+                    if runner == "agent" and str(body.get("org") or "").strip():
+                        tickets.set_org(folder, key, body.get("org"))
+                    if runner == "agent" and not tickets.read_request(folder).get("org"):
+                        raise InputValidationError(
+                            "No org is recorded for this ticket: it was started in Claude Code, not on this page.",
+                            hint="Give the alias of the org to investigate.", details={"needs_org": True})
                     if "budget_usd" in body:
                         tickets.check_budget(body.get("budget_usd"))  # refused before anything is changed
                     if "model" in body:

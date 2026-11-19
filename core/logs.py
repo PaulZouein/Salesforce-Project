@@ -25,9 +25,9 @@ DEBUG_LEVEL_NAME = "SFTI_Investigation"
 DEFAULT_API_VERSION = "62.0"
 MAX_TRACE_MINUTES = 24 * 60
 
-_LOG_ID_RE = re.compile(r"^07L[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
-_USER_ID_RE = re.compile(r"^005[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
-_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?$")
+_LOG_ID_RE = re.compile(r"^07L[A-Za-z0-9]{12}([A-Za-z0-9]{3})?\Z")
+_USER_ID_RE = re.compile(r"^005[A-Za-z0-9]{12}([A-Za-z0-9]{3})?\Z")
+_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?\Z")
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 #: What Salesforce writes into a log that reached its size limit (20 MB): lines were removed, from anywhere.
 TRUNCATION_MARKER = "MAXIMUM DEBUG LOG SIZE REACHED"
@@ -273,7 +273,7 @@ def rest_request(
     """
     if method not in ("POST", "PATCH", "DELETE"):
         raise InputValidationError(f"Unsupported method {method!r}.")
-    if not re.match(r"^/services/data/v\d{2,3}\.0/[A-Za-z0-9_/.\-]+$", path):
+    if not re.match(r"^/services/data/v\d{2,3}\.0/[A-Za-z0-9_/.\-]+\Z", path):
         raise InputValidationError(f"Invalid REST path: {path!r}.")
     with tempfile.TemporaryDirectory(prefix="sfti-rest-") as tmp:
         args = ["api", "request", "rest", path, "--method", method, "--target-org", org]
@@ -301,7 +301,7 @@ def rest_request(
 
 
 def api_version_of(info_api_version: str | None) -> str:
-    if info_api_version and re.match(r"^\d{2,3}\.0$", info_api_version):
+    if info_api_version and re.match(r"^\d{2,3}\.0\Z", info_api_version):
         return info_api_version
     return DEFAULT_API_VERSION
 

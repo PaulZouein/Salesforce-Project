@@ -20,7 +20,7 @@ from .query import PERSONAL_FIELD_PATTERN, REDACTED, run_raw_query, soql_literal
 from .sf_cli import SfCli, validate_target_org
 
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(\.[\w\-]+)+")
-_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$")
+_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?\Z")
 
 #: History objects that do not follow the "<Object>History" naming.
 HISTORY_OBJECTS = {

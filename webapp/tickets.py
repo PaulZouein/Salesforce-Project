@@ -21,6 +21,7 @@ from typing import Any
 from core.app import Investigator
 from core.errors import InputValidationError, SfInvestigatorError, WorkspaceError
 from core.report import _find_section, _sections, markdown_to_html
+from core.sf_cli import validate_target_org
 from core.workspace import validate_ticket_key
 
 MAX_TICKET_CHARS = 200_000
@@ -40,8 +41,8 @@ ATTACHMENT_TYPES = frozenset({".txt", ".log", ".md", ".csv", ".json", ".xml", ".
 #: What the result download contains, when present.
 BUNDLE_FILES = ("report.html", "report.md", "comment.md", "fix.diff", "ticket.md")
 
-_FOLLOW_UP_RE = re.compile(r"^follow-up-\d+\.txt$")
-MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,59}$")
+_FOLLOW_UP_RE = re.compile(r"^follow-up-\d+\.txt\Z")
+MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,59}\Z")
 
 _KEY_LINE_RE = re.compile(r"^\s*(?:key|ticket|issue)\s*[:#]\s*([A-Za-z][A-Za-z0-9_]{0,19}-\d{1,9})\b", re.I | re.M)
 _KEY_ANY_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,19}-\d{1,9})\b")
@@ -132,8 +133,13 @@ def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = N
         from_pdf = read_pdf(pdf)  # checked before anything is created
         if not isinstance(text, str) or len(text.strip()) < 40:
             text = from_pdf["text"] if from_pdf["readable"] else ""
-        text = ("[The ticket was given as a PDF: attachments/ticket-original.pdf. The text below was read from it.]"
-                "\n\n" + (text or "[No text could be read from the PDF: read the PDF itself.]"))
+        header = ("[The ticket was given as a PDF: attachments/ticket-original.pdf. The text below was read from it.]"
+                  "\n\n")
+        body = text or "[No text could be read from the PDF: read the PDF itself.]"
+        cut = "\n\n[The text read from the PDF stops here because it is long: the PDF itself has the rest.]"
+        if len(header) + len(body) > MAX_TICKET_CHARS:  # the PDF holds everything: cut the copy, never refuse it
+            body = body[:MAX_TICKET_CHARS - len(header) - len(cut)] + cut
+        text = header + body
     if not isinstance(text, str) or len(text.strip()) < 40:
         raise InputValidationError("Paste the whole ticket: description, comments and history.",
                                    hint="Or upload the ticket as a PDF.")
@@ -144,7 +150,7 @@ def create_ticket(inv: Investigator, text: str, org: str, *, key: str | None = N
         raise InputValidationError(
             "No ticket key was found in the text.",
             hint="Type the key in the field next to the text, for example ABC-123.")
-    key = validate_ticket_key(key.upper() if re.match(r"^[A-Za-z][A-Za-z0-9_]*-\d+$", key) else key)
+    key = validate_ticket_key(key.upper() if re.match(r"^[A-Za-z][A-Za-z0-9_]*-\d+\Z", key) else key)
     if not isinstance(org, str) or not org.strip():
         raise InputValidationError("Choose the org to investigate.")
     model = set_model(None, model)  # checked before anything is created
@@ -185,6 +191,18 @@ def read_request(folder: Path) -> dict[str, Any]:
 
 def _write_request(folder: Path, request: dict[str, Any]) -> None:
     (folder / REQUEST_NAME).write_text(json.dumps(request, indent=2), encoding="utf-8")
+
+
+def set_org(folder: Path, key: str, org: Any) -> str:
+    """Record which org a ticket investigates: a ticket started in Claude Code has no record of it."""
+    if not isinstance(org, str) or not org.strip():
+        raise InputValidationError("Choose the org to investigate.")
+    org = validate_target_org(org.strip())
+    request = read_request(folder)
+    request["key"] = key
+    request["org"] = org
+    _write_request(folder, request)
+    return org
 
 
 def set_model(folder: Path | None, model: str | None) -> str | None:
@@ -253,12 +271,14 @@ def save_attachment(inv: Investigator, key: str, name: str, data: bytes) -> dict
     """Save a file the user attaches to a ticket (a screenshot, an exported log, a spreadsheet extract)."""
     if not isinstance(name, str) or not name.strip():
         raise InputValidationError("The file has no name.")
-    clean = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name.replace("\\", "/")).name).strip(".-")[:100]
-    suffix = Path(clean).suffix.lower()
-    if not clean or suffix not in ATTACHMENT_TYPES:
+    stem, suffix = os.path.splitext(Path(name.replace("\\", "/")).name)
+    if suffix.lower() not in ATTACHMENT_TYPES:
         raise InputValidationError(
-            f"Files of type '{suffix or 'unknown'}' are not accepted.",
+            f"Files of type '{suffix.lower() or 'unknown'}' are not accepted.",
             hint="Accepted: " + ", ".join(sorted(ATTACHMENT_TYPES)) + ".")
+    # Only plain letters and digits are kept, and the type is kept whatever the length: "Снимок экрана.png"
+    # becomes "attachment.png", not the refused "png".
+    clean = (re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip(".-")[:90] or "attachment") + suffix
     if clean in (ORIGINAL_NAME, ORIGINAL_PDF_NAME) or _FOLLOW_UP_RE.match(clean):
         raise InputValidationError("That file name is used by the investigator. Rename the file and try again.")
     if not data:
@@ -268,7 +288,15 @@ def save_attachment(inv: Investigator, key: str, name: str, data: bytes) -> dict
     folder = inv.workspace.ticket_dir(key)
     attachments = folder / "attachments"
     attachments.mkdir(exist_ok=True)
-    if len(_attachment_names(folder)) >= MAX_ATTACHMENTS and not (attachments / clean).exists():
+    # Two different files can clean to the same name ("ошибка 1.png" and "скрин 1.png"): never overwrite
+    # evidence with other content. The same file sent again keeps its name.
+    stem, number = clean[:-len(suffix)], 1
+    while (attachments / clean).exists() and (attachments / clean).read_bytes() != data:
+        number += 1
+        clean = f"{stem}-{number}{suffix}"
+    if (attachments / clean).exists():
+        return {"saved": f"attachments/{clean}", "bytes": len(data), "note": "This file was already attached."}
+    if len(_attachment_names(folder)) >= MAX_ATTACHMENTS:
         raise InputValidationError(f"A ticket can hold {MAX_ATTACHMENTS} attached files at most.")
     (attachments / clean).write_bytes(data)
     return {"saved": f"attachments/{clean}", "bytes": len(data)}
@@ -498,7 +526,7 @@ def ticket_detail(inv: Investigator, key: str, run: dict[str, Any] | None = None
         out["evidence"] = inv.evidence_index(key)["artifacts"]
     except SfInvestigatorError:
         out["evidence"] = []
-    request = read_request(folder)
+    request = {**read_request(folder), "key": key}  # a ticket started in Claude Code has no request.json
     out["prompt"] = agent_prompt(request, resume=has_progress(folder)) if request.get("org") else None
     return out
 

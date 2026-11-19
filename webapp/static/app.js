@@ -682,8 +682,17 @@ async function viewTicket(key) {
         if (model) body.model = model.value;
         if ($("#economy")) Object.assign(body, savingChoice());
       }
-      try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body }); lastStage = null; await paint(true); poll(); refreshMeter(); }
-      catch (error) { $("#ticket-error").innerHTML = errorBox(error); window.scrollTo(0, 0); }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { await api(`/api/tickets/${encodeURIComponent(key)}/run`, { method: "POST", body }); lastStage = null; await paint(true); poll(); refreshMeter(); return; }
+        catch (error) {
+          // A ticket started in Claude Code has no org recorded: ask once, then send it with the run.
+          if (attempt === 0 && error.details && error.details.needs_org) {
+            const org = window.prompt(error.message + "\n\nAlias of the org to investigate:", "");
+            if (org && org.trim()) { body.org = org.trim(); continue; }
+          }
+          $("#ticket-error").innerHTML = errorBox(error); window.scrollTo(0, 0); return;
+        }
+      }
     };
     const file = $("#file");
     if (file) file.onchange = async () => {

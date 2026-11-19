@@ -437,6 +437,23 @@ def fake_claude(tmp_path, monkeypatch):
     return record
 
 
+def test_a_ticket_started_in_claude_code_can_be_continued_from_the_page(web, fake_claude, project):
+    """It has no request.json: the run used to die on a KeyError and stay 'running' for good."""
+    from core.app import Investigator
+
+    Investigator(root=project.root).init_ticket("DEMO-101")  # what intake does in a Claude Code session
+    status, refused = web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
+    assert status == 400 and refused["error"]["details"] == {"needs_org": True}
+    status, _ = web.post("/api/tickets/DEMO-101/run", {"runner": "agent", "org": "demo-prod"})
+    assert status == 200
+    detail = web.wait_until_finished("DEMO-101", timeout=60)
+    assert detail["run"]["status"] == "finished"
+    call = json.loads(fake_claude.read_text(encoding="utf-8"))
+    assert "Ticket DEMO-101" in call["prompt"] or "ticket, DEMO-101" in call["prompt"]
+    assert "Org to investigate: demo-prod." in call["prompt"]
+    assert web.get("/api/tickets/DEMO-101")[1]["prompt"]  # the page can show the prompt now that the org is known
+
+
 def test_agent_run_starts_claude_code_unattended_and_reports_progress(web, fake_claude, project):
     submit(web)
     status, started = web.post("/api/tickets/DEMO-101/run", {"runner": "agent"})
@@ -682,8 +699,8 @@ def test_files_can_be_attached_to_a_ticket(web, project):
     submit(web)
     picture = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 100).decode()
     status, saved = web.post("/api/tickets/DEMO-101/attachments", {"name": "Error screen (1).PNG", "content_base64": picture})
-    assert status == 200 and saved == {"ok": True, "saved": "attachments/Error-screen-1-.PNG", "bytes": 108}
-    assert (project.ticket("DEMO-101") / "attachments" / "Error-screen-1-.PNG").read_bytes().startswith(b"\x89PNG")
+    assert status == 200 and saved == {"ok": True, "saved": "attachments/Error-screen-1.PNG", "bytes": 108}
+    assert (project.ticket("DEMO-101") / "attachments" / "Error-screen-1.PNG").read_bytes().startswith(b"\x89PNG")
     # A path in the name is reduced to the file name; nothing is written outside the ticket's attachments.
     status, saved = web.post("/api/tickets/DEMO-101/attachments",
                              {"name": "..\\..\\..\\sfti.config.json", "content_base64": base64.b64encode(b"{}").decode()})
@@ -692,7 +709,18 @@ def test_files_can_be_attached_to_a_ticket(web, project):
     status, saved = web.post("/api/tickets/DEMO-101/attachments",
                              {"name": "../../outside.txt", "content_base64": base64.b64encode(b"hello").decode()})
     assert saved["saved"] == "attachments/outside.txt" and not (project.root / "outside.txt").exists()
-    assert web.get("/api/tickets/DEMO-101")[1]["attachments"] == ["Error-screen-1-.PNG", "outside.txt", "sfti.config.json"]
+    assert web.get("/api/tickets/DEMO-101")[1]["attachments"] == ["Error-screen-1.PNG", "outside.txt", "sfti.config.json"]
+
+    # Names in other alphabets keep their type; different files never overwrite each other; long names keep the type.
+    def shot(n):
+        return base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes([n]) * 20).decode()
+
+    names = [web.post("/api/tickets/DEMO-101/attachments", {"name": name, "content_base64": shot(n)})[1]["saved"]
+             for n, name in enumerate(["Снимок.png", "ошибка 1.png", "скрин 1.png", "x" * 150 + ".png"])]
+    assert names == ["attachments/attachment.png", "attachments/1.png", "attachments/1-2.png",
+                     "attachments/" + "x" * 90 + ".png"]
+    again = web.post("/api/tickets/DEMO-101/attachments", {"name": "скрин 1.png", "content_base64": shot(2)})[1]
+    assert again["saved"] == "attachments/1-2.png" and "already attached" in again["note"]
 
     text = base64.b64encode(b"hello").decode()
     for body, fragment in (
@@ -723,7 +751,7 @@ def test_attachment_size_and_count_are_limited(web, project, monkeypatch):
     assert web.post("/api/tickets/DEMO-101/attachments", {"name": "2.txt", "content_base64": small})[0] == 200
     status, data = web.post("/api/tickets/DEMO-101/attachments", {"name": "3.txt", "content_base64": small})
     assert status == 400 and "2 attached files at most" in data["error"]["message"]
-    assert web.post("/api/tickets/DEMO-101/attachments", {"name": "2.txt", "content_base64": small})[0] == 200  # replace
+    assert web.post("/api/tickets/DEMO-101/attachments", {"name": "2.txt", "content_base64": small})[0] == 200  # same file
     # The request itself is refused before it is read when it is larger than any accepted file could be.
     status, _, _ = web.request("POST", "/api/tickets/DEMO-101/attachments",
                                headers={"Content-Type": "application/json", "X-SFTI-Token": web.app.token,
@@ -1008,6 +1036,18 @@ def test_a_ticket_can_be_given_as_a_pdf(web, fake_claude, project):
     status, data = web.post("/api/tickets/ACME-77/attachments", {"name": "ticket-original.pdf",
                                                                  "content_base64": base64.b64encode(pdf).decode()})
     assert status == 400 and "used by the investigator" in data["error"]["message"]
+
+
+def test_a_long_pdf_ticket_is_saved_with_its_text_cut_and_the_pdf_whole(web, project):
+    """About 50 dense pages read as 200,000 characters: adding the header used to push it over the limit."""
+    pdf = make_pdf(JIRA_PDF_LINES)
+    long_text = "\n".join(JIRA_PDF_LINES) + "\n" + ("Line of a long comment thread. " * 7000)[:200_000 - 400]
+    status, made = web.post("/api/tickets", {"text": long_text, "org": "demo-prod",
+                                             "pdf_base64": base64.b64encode(pdf).decode()})
+    assert status == 200 and made["ticket"]["key"] == "ACME-77"
+    original = (project.ticket("ACME-77") / "attachments" / "ticket-original.txt").read_text(encoding="utf-8")
+    assert len(original) <= 200_000 and original.endswith("the PDF itself has the rest.]")
+    assert (project.ticket("ACME-77") / "attachments" / "ticket-original.pdf").read_bytes() == pdf
 
 
 def test_a_scanned_pdf_needs_only_the_key(web, project):

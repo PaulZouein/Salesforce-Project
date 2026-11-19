@@ -20,8 +20,8 @@ from .sf_cli import SfCli, validate_target_org
 DIRECTIONS = ("used_by", "uses", "both")
 MAX_DEPENDENCY_ROWS = 500
 
-_NAME_RE = re.compile(r"^[A-Za-z0-9_.\- ]{1,120}$")
-_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,60}$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9_.\- ]{1,120}\Z")
+_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,60}\Z")
 
 COVERAGE_NOTE = (
     "MetadataComponentDependency does not record every reference (for example dynamic Apex, "

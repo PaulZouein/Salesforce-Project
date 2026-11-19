@@ -68,8 +68,8 @@ STATUS_IN_PROGRESS = "in_progress"  # still running in the org when the wait ran
 # Deploy statuses of the Metadata API that mean "not finished yet" (plugin-deploy-retrieve exits 69 on them).
 _UNFINISHED_DEPLOY_STATUSES = ("InProgress", "Pending", "Canceling")
 
-_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$")
-_TEST_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,79}(\.[A-Za-z][A-Za-z0-9_]{0,79})?$")
+_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?\Z")
+_TEST_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,79}(\.[A-Za-z][A-Za-z0-9_]{0,79})?\Z")
 
 
 def _truncate(text: str, limit: int = MAX_DIFF_CHARS) -> str:
@@ -515,7 +515,7 @@ class ChangeManager:
     def rollback_change(self, change_id: str, *, reason: str, force: bool = False,
                         approved_by: str | None = None) -> dict[str, Any]:
         """Undo a deployed change or a record update using the snapshot taken before it."""
-        if not isinstance(change_id, str) or not re.match(r"^CHG-[0-9A-Za-z\-]{6,40}$", change_id):
+        if not isinstance(change_id, str) or not re.match(r"^CHG-[0-9A-Za-z\-]{6,40}\Z", change_id):
             raise InputValidationError(f"Invalid change Id: {change_id!r}.")
         reason = _require_reason(reason)
         change = self.audit.get_change(change_id)
@@ -952,13 +952,36 @@ class ChangeManager:
         return out
 
 
+_DATETIME_RE = re.compile(r"\A(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+\-]\d{2}:?\d{2})?\Z")
+
+
+def _as_utc(value: str) -> datetime | None:
+    """A Salesforce datetime in any of its spellings (``…Z``, ``….000+0000``, ``+01:00``), in UTC."""
+    match = _DATETIME_RE.match(value)
+    if not match:
+        return None
+    day, hours, minutes, seconds, zone = match.groups()
+    zone = "+00:00" if zone in (None, "Z") else (zone if ":" in zone else f"{zone[:3]}:{zone[3:]}")
+    try:
+        return datetime.fromisoformat(f"{day}T{hours}:{minutes}:{seconds or '00'}{zone}").astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 def _same_value(actual: Any, wanted: Any) -> bool:
+    """Does the value read back equal the one written, in the form Salesforce stores it?"""
     if actual == wanted:
         return True
     if actual is None or wanted is None:
         return (actual in (None, "")) and (wanted in (None, ""))
     if isinstance(actual, bool) or isinstance(wanted, bool):
         return str(actual).lower() == str(wanted).lower()
+    if isinstance(actual, str) and isinstance(wanted, str):
+        if _RECORD_ID_RE.match(actual) and _RECORD_ID_RE.match(wanted) and len(actual) != len(wanted):
+            return actual[:15] == wanted[:15]  # a 15-character Id is read back with 18 characters
+        when, asked = _as_utc(actual), _as_utc(wanted)
+        if when is not None and asked is not None:
+            return when == asked  # 2026-03-01T08:00:00Z is read back as 2026-03-01T08:00:00.000+0000
     try:
         return float(actual) == float(wanted)
     except (TypeError, ValueError):
