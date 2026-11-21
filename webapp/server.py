@@ -33,7 +33,7 @@ from core import prereqs
 from core.app import Investigator
 from core.config import project_root
 from core.errors import InputValidationError, SfCliError, SfInvestigatorError, WorkspaceError
-from core.sf_cli import SfCli, read_auth_url, validate_target_org
+from core.sf_cli import LOGIN_URLS, SfCli, read_auth_url, validate_login_url, validate_target_org
 from core.workspace import validate_ticket_key
 
 from . import __version__, agent, tickets, usage
@@ -313,6 +313,39 @@ class App:
         print(f"Connected the org '{alias}' ({connected['org_id']}) at {auth.host}.", file=sys.stderr, flush=True)
         return {"connected": connected}
 
+    def login_org(self, alias: Any, kind: Any, domain: Any = None, *, replace: bool = False) -> dict[str, Any]:
+        """Log in to an org from the page: the Salesforce CLI opens this computer's browser on the login page.
+
+        The password is typed into Salesforce, never into the page, and nothing in any org changes. The request
+        waits until the login is finished (up to five minutes).
+        """
+        if self.demo:
+            raise InputValidationError("The demo uses simulated orgs.",
+                                       hint="Press 'Use my own Salesforce orgs' first, then log in to your org.")
+        if not isinstance(alias, str) or not alias.strip():
+            raise InputValidationError("Give the org a short name, for example my-sandbox.")
+        alias = validate_target_org(alias.strip())
+        if kind == "custom":
+            url = validate_login_url(domain)
+        elif kind in LOGIN_URLS:
+            url = LOGIN_URLS[kind]
+        else:
+            raise InputValidationError("Choose what kind of org it is: sandbox, production, Developer Edition or "
+                                       "custom domain.")
+        if not replace:
+            in_use = {str(o.get("alias") or "") for o in self.investigator().list_orgs().get("orgs", [])}
+            if alias in in_use:
+                raise InputValidationError(
+                    f"The name {alias!r} is already used by a connected org.",
+                    hint="Choose another short name, or confirm that this name should now point at the org you "
+                         "are logging in to.", details={"alias_in_use": alias})
+        print(f"Logging in to '{alias}' at {url}: finish in the browser window that opened...",
+              file=sys.stderr, flush=True)
+        connected = self.investigator().cli.login_web(alias, url)
+        self.cache.clear()
+        print(f"Connected the org '{alias}' ({connected['org_id']}).", file=sys.stderr, flush=True)
+        return {"connected": connected}
+
     def sample_ticket(self) -> dict[str, Any]:
         from simulator import demo
         return {"key": demo.KEY, "text": demo.TICKET_TEXT.read_text(encoding="utf-8"), "org": demo.PROD,
@@ -564,6 +597,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if path == "/api/orgs/connect":
                 return self._guarded(lambda: app.connect_org(body.get("alias"), body.get("auth_url"),
                                                              replace=body.get("replace") is True))
+            if path == "/api/orgs/login":
+                return self._guarded(lambda: app.login_org(body.get("alias"), body.get("kind"), body.get("domain"),
+                                                           replace=body.get("replace") is True))
             if path == "/api/ticket-pdf":
                 def read_pdf() -> dict[str, Any]:
                     found = tickets.read_pdf(_decode(body.get("content_base64")))

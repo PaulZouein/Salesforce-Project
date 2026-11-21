@@ -25,6 +25,10 @@ if [ -z "$PY" ]; then
   echo "     (or, with Homebrew:  brew install python@3.13)"
   echo "  2. Double-click this file again."
   echo
+  # Opens the download page on a Mac; elsewhere (or without the usual tools) it only prints the address above.
+  if [ "$(uname 2>/dev/null)" = "Darwin" ] && command -v open >/dev/null 2>&1; then
+    open "https://www.python.org/downloads/macos/" 2>/dev/null
+  fi
   printf "Press Return to close. "
   read -r _
   exit 1

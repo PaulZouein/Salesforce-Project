@@ -41,15 +41,17 @@ opened; closing it stops the investigator.
 ## 3. Follow the page
 
 **Get started** checks your computer and walks you through four steps. The one that needs you is
-connecting an org. The page builds the command for you; it looks like this:
+connecting an org: give it a short name, choose what kind of org it is (sandbox, production,
+Developer Edition or your My Domain address), and press **Log in with your browser**. Log in to
+Salesforce in the window that opens; the page lists the org when you are done. Production is
+read-only here whatever your user is allowed to do.
+
+The same login from a terminal, if you prefer (the page shows the exact line under
+**Or connect from a terminal**):
 
 ```
 sf org login web --alias my-sandbox --instance-url https://test.salesforce.com
 ```
-
-Run it in a terminal, log in to Salesforce in the browser window that opens, then press
-**I have connected it** on the page. For production leave out `--instance-url …`; production is
-read-only here whatever your user is allowed to do.
 
 ## 4. Investigate a ticket
 
@@ -104,7 +106,7 @@ your computer.
 | "Python 3.11 or newer was not found" | Install Python from python.org, then start again. On Windows tick *Add python.exe to PATH*. |
 | "The installation did not finish" | No internet, or a company network blocking `pypi.org`. Fix that and start again. |
 | The page opens but **Claude Code not found** | Install it (table above), then press **Check again**. You can still paste tickets; the page gives you a prompt to run in Claude Code yourself. |
-| **No org is connected** | Run the `sf org login web …` command the page shows, then **I have connected it**. |
+| **No org is connected** | **Log in with your browser** on **Get started**, or run the `sf org login web …` line the page shows, then **I have connected it**. |
 | "The sf-investigator tools did not start" | Close the window and start again with the start file, not with `python -m webapp` from another Python. |
 | The investigation stops with a sign-in message | Run `claude` once in a terminal and sign in. |
 | You started it twice | Nothing breaks: the second start opens the copy that is already running. To switch between demo and your own orgs, close the first window. |

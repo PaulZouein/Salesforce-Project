@@ -18,6 +18,8 @@ echo   1. Install it from https://www.python.org/downloads/
 echo      and tick "Add python.exe to PATH" on the first screen of the installer.
 echo   2. Double-click this file again.
 echo.
+echo  The download page opens in your browser now.
+start "" "https://www.python.org/downloads/windows/"
 pause
 exit /b 1
 

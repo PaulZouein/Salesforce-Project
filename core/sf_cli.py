@@ -638,6 +638,77 @@ class SfCli:
             hint=_connect_hint(message, auth.host),
         )
 
+    def login_web(self, alias: str, instance_url: str, *, timeout: float = 300.0) -> dict[str, Any]:
+        """Log in to an org in the browser and keep the authorization on this computer.
+
+        Runs ``sf org login web --alias <alias> --instance-url <url> --no-prompt --json``: the
+        Salesforce CLI opens the system browser on the Salesforce login page, the user logs in
+        there, and the CLI saves the authorization. Like ``connect_with_auth_url`` it changes
+        nothing in any org, has its own method instead of a place on the read allowlist, and only
+        the local page calls it, when the user presses its login button.
+        """
+        validate_target_org(alias)
+        url = validate_login_url(instance_url)
+        args = ["org", "login", "web", "--alias", alias, "--instance-url", url, "--no-prompt", "--json"]
+        self._check_arguments(args)
+        exe = self.executable()
+        label = "sf org login web"
+        host = url.split("://", 1)[1]
+        try:
+            proc = self._runner([exe, *args], None, timeout, self._environment())
+        except TimeoutError:
+            raise SfCliTimeoutError(
+                f"The login at {host} was not finished within {timeout / 60:.0f} minutes and was stopped.",
+                hint="Press the login button again and finish logging in in the browser window that opens.",
+            ) from None
+        except FileNotFoundError:
+            raise SfCliNotFoundError(
+                f"Could not start the Salesforce CLI at {exe!r}.",
+                hint="Install it (step 1 on this page), or check that 'sf --version' works in a terminal.",
+            ) from None
+        except OSError as exc:
+            raise SfCliError(f"Could not start '{label}': {exc}", command=label) from None
+        envelope = parse_json_output(proc.stdout)
+        if envelope is None:
+            raise SfCliOutputError(f"'{label}' did not return JSON (exit code {proc.returncode}).",
+                                   details={"stdout": _tail(proc.stdout), "stderr": _tail(proc.stderr)})
+        envelope = scrub_secrets(envelope)
+        status = envelope.get("status", proc.returncode)
+        result = envelope.get("result")
+        if status == 0 and isinstance(result, dict) and result.get("orgId"):
+            return {"alias": alias, "org_id": str(result["orgId"]), "host": host,
+                    "username": result.get("username")}
+        message = str(envelope.get("message") or f"'{label}' failed with status {status}.").strip()
+        raise SfCliError(message, name=str(envelope.get("name") or "Error"), command=label,
+                         exit_code=status if isinstance(status, int) else proc.returncode,
+                         hint="Press the login button again; if the browser did not open, use the command shown "
+                              "on the page in a terminal.")
+
+
+#: Where a browser login may start: login.salesforce.com, test.salesforce.com, or a My Domain under salesforce.com.
+_LOGIN_URL_RE = re.compile(r"\Ahttps://((?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)*salesforce\.com)/?\Z",
+                           re.IGNORECASE)
+LOGIN_URLS = {"production": "https://login.salesforce.com", "developer": "https://login.salesforce.com",
+              "sandbox": "https://test.salesforce.com"}
+
+
+def validate_login_url(value: Any) -> str:
+    """A Salesforce login address for ``org login web``, normalized without a trailing slash."""
+    text = str(value or "").strip()
+    if not text.lower().startswith(("http://", "https://")):
+        text = "https://" + text
+    if ".lightning.force.com" in text.lower():
+        raise InputValidationError(
+            "That is the Lightning address of the org, which the Salesforce CLI does not accept for logging in.",
+            hint="Use the My Domain address, which ends in .my.salesforce.com (Setup > My Domain shows it).")
+    match = _LOGIN_URL_RE.match(text)
+    if not match:
+        raise InputValidationError(
+            f"{str(value)[:80]!r} is not a Salesforce login address.",
+            hint="Use https://login.salesforce.com, https://test.salesforce.com or your My Domain address, "
+                 "for example https://yourcompany.my.salesforce.com.")
+    return "https://" + match.group(1).lower()
+
 
 def _hint_for(name: str, message: str) -> str | None:
     text = f"{name} {message}"

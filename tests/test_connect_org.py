@@ -276,3 +276,62 @@ def test_the_page_offers_the_paste_option_and_asks_relative_addresses():
     assert "sf org auth show-sfdx-auth-url --target-org" in page
     assert 'fetch(path.replace(/^\\//, ""), init)' in page
     assert 'href="/tickets/' not in page
+
+
+# --- logging in with the browser, from the page ---------------------------------------------
+
+
+@pytest.mark.parametrize("given, url", [
+    ("https://login.salesforce.com", "https://login.salesforce.com"),
+    ("test.salesforce.com/", "https://test.salesforce.com"),
+    (f"https://{HOST.upper()}/", f"https://{HOST}"),
+])
+def test_a_login_address_is_normalized(given, url):
+    from core.sf_cli import validate_login_url
+
+    assert validate_login_url(given) == url
+
+
+@pytest.mark.parametrize("given, fragment", [
+    ("https://acme.lightning.force.com", "Lightning address"),
+    ("https://evil.example.com", "not a Salesforce login address"),
+    ("https://salesforce.com.evil.example.com", "not a Salesforce login address"),
+    ("https://acme.my.salesforce.com/path?x=1", "not a Salesforce login address"),
+])
+def test_other_login_addresses_are_refused(given, fragment):
+    from core.sf_cli import validate_login_url
+
+    with pytest.raises(InputValidationError) as refused:
+        validate_login_url(given)
+    assert fragment in refused.value.message
+
+
+def test_logging_in_from_the_page_runs_the_browser_login_without_prompts(page, capfd):
+    status, raw = page.call("POST", "/api/orgs/login", {"alias": "my-dev", "kind": "developer"})
+    assert status == 200, raw
+    assert json.loads(raw)["connected"] == {"alias": "my-dev", "org_id": ORG_ID, "host": "login.salesforce.com",
+                                            "username": "someone@example.com"}
+    argv = page.runner.calls[0]["argv"]
+    assert argv[1:] == ["org", "login", "web", "--alias", "my-dev", "--instance-url", "https://login.salesforce.com",
+                        "--no-prompt", "--json"]
+    assert TOKEN not in raw and "finish in the browser window" in capfd.readouterr().err
+    status, raw = page.call("POST", "/api/orgs/login", {"alias": "acme", "kind": "custom", "domain": HOST})
+    assert status == 200 and page.runner.calls[1]["argv"][7] == f"https://{HOST}"
+
+
+def test_the_page_login_asks_before_reusing_a_name_and_refuses_bad_input(page):
+    status, raw = page.call("POST", "/api/orgs/login", {"alias": "taken", "kind": "sandbox"})
+    assert status == 400 and json.loads(raw)["error"]["details"] == {"alias_in_use": "taken"}
+    assert page.call("POST", "/api/orgs/login", {"alias": "taken", "kind": "sandbox", "replace": True})[0] == 200
+    for body, fragment in (({"alias": "x", "kind": "mars"}, "Choose what kind"),
+                           ({"alias": "", "kind": "sandbox"}, "short name"),
+                           ({"alias": "x", "kind": "custom", "domain": "https://x.lightning.force.com"}, "Lightning")):
+        status, raw = page.call("POST", "/api/orgs/login", body)
+        assert status == 400 and fragment in raw, body
+    assert page.call("POST", "/api/orgs/login", {"alias": "x", "kind": "sandbox"}, token=False)[0] == 403
+
+
+def test_a_login_left_unfinished_stops_with_a_clear_message(page):
+    page.runner.result = TimeoutError()
+    status, raw = page.call("POST", "/api/orgs/login", {"alias": "my-dev", "kind": "sandbox"})
+    assert status != 200 and "was not finished within 5 minutes" in raw

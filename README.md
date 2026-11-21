@@ -78,8 +78,9 @@ report a vulnerability: [`SECURITY.md`](SECURITY.md).
 
 1. Install the Salesforce CLI: `npm install --global @salesforce/cli`.
 2. Double-click `start.bat` (Windows) or `start.command` (macOS), not the demo. **Get started**
-   builds the login command for your kind of org (`sf org login web --alias my-sandbox ...`). You
-   log in to Salesforce in your own browser; the investigator never sees your password. No
+   has a **Log in with your browser** button for your kind of org (it runs
+   `sf org login web --alias my-sandbox ...` for you). You log in to Salesforce in your own
+   browser; the investigator never sees your password. No
    browser on the computer that runs it? The page can take an authorization pasted from one that
    has ([guide](docs/GUIDE.md#what-the-page-can-and-cannot-do)).
 3. **New ticket**: paste the ticket or upload its PDF, and choose the org where it happens.

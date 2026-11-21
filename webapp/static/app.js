@@ -198,8 +198,9 @@ $("#skip").onclick = event => { event.preventDefault(); main.setAttribute("tabin
 /* ---------- Get started ---------- */
 function loginAlias() { return (state.loginAlias || "my-org").replace(/[^A-Za-z0-9._@+-]/g, "-"); }
 function loginCommand() {
+  const domain = (state.loginDomain || "").trim().replace(/[^A-Za-z0-9.:/-]/g, "");
   const urls = { sandbox: " --instance-url https://test.salesforce.com", production: "", developer: "",
-                 custom: " --instance-url https://YOUR-DOMAIN.my.salesforce.com" };
+                 custom: ` --instance-url ${domain || "https://YOUR-DOMAIN.my.salesforce.com"}` };
   return `sf org login web --alias ${loginAlias()}${urls[state.loginType]}`;
 }
 async function viewStart(again) {
@@ -250,7 +251,7 @@ async function viewStart(again) {
                  : `<p class="muted">No org is connected yet.</p>`}
         ${STATUS.demo ? "" : `
         <details ${hasOrg ? "" : "open"}><summary>${hasOrg ? "Connect another org" : "How to connect your org"}</summary>
-          <p class="small muted" style="margin:10px 0 8px">Connecting happens in your own terminal, through the Salesforce CLI. Your browser opens, you log in to Salesforce, and you can close it again. The investigator never sees your password.</p>
+          <p class="small muted" style="margin:10px 0 8px">Connecting goes through the Salesforce CLI on this computer: your browser opens on the Salesforce login page, you log in there, and you can close it again. The investigator never sees your password.</p>
           <div class="row" style="margin-bottom:10px">
             <div style="min-width:180px;flex:1"><label for="alias">A short name for this org</label><input type="text" id="alias" value="${esc(state.loginAlias)}" autocomplete="off"></div>
             <div><label>What kind of org is it?</label>
@@ -259,12 +260,17 @@ async function viewStart(again) {
                 <button data-type="developer">Developer Edition</button><button data-type="custom">Custom domain</button>
               </div></div>
           </div>
-          <div class="small">1. Open a terminal and run this:</div>
-          <div id="login-cmd"></div>
-          <div class="small">2. Log in in the browser window that opens, and allow access.</div>
-          <div class="small" style="margin-top:4px">3. Come back here and press <b>I have connected it</b>.</div>
-          <p class="small muted" style="margin-top:10px">Use a login with only the access the investigation needs. Production is always read-only here, whatever the user is allowed to do.</p>
-          <button class="btn sm" id="orgs-refresh">I have connected it</button>
+          <div id="domain-row" style="margin-bottom:10px" hidden><label for="domain">Your My Domain address</label><input type="text" id="domain" placeholder="https://yourcompany.my.salesforce.com" value="${esc(state.loginDomain || "")}" autocomplete="off"></div>
+          <button class="btn primary" id="login-web">Log in with your browser</button>
+          <div id="login-result"></div>
+          <p class="small muted" style="margin-top:8px">A browser window opens on the Salesforce login page. Log in there and allow access; this page shows the org when you are done. Use a login with only the access the investigation needs. Production is always read-only here, whatever the user is allowed to do.</p>
+          <details style="margin-top:6px"><summary>Or connect from a terminal</summary>
+            <div class="small" style="margin-top:8px">1. Open a terminal and run this:</div>
+            <div id="login-cmd"></div>
+            <div class="small">2. Log in in the browser window that opens, and allow access.</div>
+            <div class="small" style="margin-top:4px">3. Come back here and press <b>I have connected it</b>.</div>
+            <button class="btn sm" id="orgs-refresh" style="margin-top:8px">I have connected it</button>
+          </details>
           <details id="paste-auth" style="margin-top:14px"><summary>No browser on the computer that runs the investigator? Paste an authorization instead</summary>
             <p class="small muted" style="margin:10px 0 8px">For when this page runs somewhere you cannot log in from, such as a remote computer or a cloud session. On a computer that has the Salesforce CLI and a browser:</p>
             <div class="small">1. Connect the org there, with the command above:</div>
@@ -321,6 +327,35 @@ async function viewStart(again) {
     const again = $("#login-cmd-2"); if (again) again.innerHTML = cmd(loginCommand());
     const show = $("#auth-url-cmd"); if (show) show.innerHTML = cmd(`sf org auth show-sfdx-auth-url --target-org ${loginAlias()}`);
     document.querySelectorAll("#login-type button").forEach(b => b.classList.toggle("on", b.dataset.type === state.loginType));
+    const domainRow = $("#domain-row"); if (domainRow) domainRow.hidden = state.loginType !== "custom";
+  };
+  const domainField = $("#domain");
+  if (domainField) domainField.oninput = () => { state.loginDomain = domainField.value; paintLogin(); };
+  const loginWeb = $("#login-web");
+  if (loginWeb) loginWeb.onclick = async () => {
+    const out = $("#login-result");
+    const body = { alias: loginAlias(), kind: state.loginType, domain: (state.loginDomain || "").trim() };
+    if (body.kind === "custom" && !body.domain) {
+      out.innerHTML = `<p class="small" style="color:var(--bad)">Type your My Domain address first.</p>`; return;
+    }
+    loginWeb.disabled = true;
+    out.innerHTML = `<p class="small muted"><span class="spinner"></span> A browser window opened on the Salesforce login page. Log in there and allow access. This page waits for you, up to five minutes.</p>`;
+    try {
+      let got;
+      try { got = await api("/api/orgs/login", { method: "POST", body }); }
+      catch (error) {
+        // Asked before the browser opens: the name already points at a connected org.
+        if (!(error.details && error.details.alias_in_use) ||
+            !confirm(`"${body.alias}" is already the name of a connected org. Point it at the org you log in to instead?`)) throw error;
+        got = await api("/api/orgs/login", { method: "POST", body: { ...body, replace: true } });
+      }
+      toast(`Connected: ${got.connected.alias}`);
+      viewStart(true);
+    } catch (error) {
+      if (out.isConnected) out.innerHTML = errorBox(error);
+    } finally {
+      if (loginWeb.isConnected) loginWeb.disabled = false;
+    }
   };
   const connect = $("#auth-connect");
   if (connect) connect.onclick = async () => {
@@ -351,6 +386,7 @@ async function viewStart(again) {
     alias.oninput = () => { state.loginAlias = alias.value; paintLogin(); };
     document.querySelectorAll("#login-type button").forEach(b => b.onclick = () => {
       state.loginType = b.dataset.type;
+      const result = $("#login-result"); if (result) result.innerHTML = "";
       const names = { sandbox: "my-sandbox", production: "my-prod", developer: "my-dev", custom: "my-org" };
       if (Object.values(names).includes(state.loginAlias)) { state.loginAlias = names[state.loginType]; alias.value = state.loginAlias; }
       paintLogin();
