@@ -994,7 +994,9 @@ class ChangeManager:
         return out
 
 
-_DATETIME_RE = re.compile(r"\A(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+\-]\d{2}:?\d{2})?\Z")
+_DATETIME_RE = re.compile(
+    r"\A(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(Z|[+\-]\d{2}:?\d{2})?\Z")
+_ID_SUFFIX_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
 
 
 def _as_utc(value: str) -> datetime | None:
@@ -1002,12 +1004,23 @@ def _as_utc(value: str) -> datetime | None:
     match = _DATETIME_RE.match(value)
     if not match:
         return None
-    day, hours, minutes, seconds, zone = match.groups()
+    day, hours, minutes, seconds, fraction, zone = match.groups()
     zone = "+00:00" if zone in (None, "Z") else (zone if ":" in zone else f"{zone[:3]}:{zone[3:]}")
+    fraction = (fraction or ".0")[:7]  # fromisoformat takes at most microseconds
     try:
-        return datetime.fromisoformat(f"{day}T{hours}:{minutes}:{seconds or '00'}{zone}").astimezone(timezone.utc)
+        return datetime.fromisoformat(
+            f"{day}T{hours}:{minutes}:{seconds or '00'}{fraction.ljust(7, '0')}{zone}").astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def _id18(id15: str) -> str:
+    """The 18-character form of a 15-character Salesforce Id: three letters that encode its upper case."""
+    suffix = ""
+    for start in range(0, 15, 5):
+        bits = sum(1 << i for i, char in enumerate(id15[start:start + 5]) if "A" <= char <= "Z")
+        suffix += _ID_SUFFIX_CHARS[bits]
+    return id15 + suffix
 
 
 def _same_value(actual: Any, wanted: Any) -> bool:
@@ -1019,12 +1032,14 @@ def _same_value(actual: Any, wanted: Any) -> bool:
     if isinstance(actual, bool) or isinstance(wanted, bool):
         return str(actual).lower() == str(wanted).lower()
     if isinstance(actual, str) and isinstance(wanted, str):
-        if _RECORD_ID_RE.match(actual) and _RECORD_ID_RE.match(wanted) and len(actual) != len(wanted):
-            return actual[:15] == wanted[:15]  # a 15-character Id is read back with 18 characters
+        short, long = sorted((actual, wanted), key=len)
+        if len(short) == 15 and len(long) == 18 and _RECORD_ID_RE.match(short) and _id18(short) == long:
+            return True  # a 15-character Id is read back with 18: same Id only when the checksum says so
         when, asked = _as_utc(actual), _as_utc(wanted)
         if when is not None and asked is not None:
             return when == asked  # 2026-03-01T08:00:00Z is read back as 2026-03-01T08:00:00.000+0000
+        return False  # two texts: "00123" is not "123"
     try:
-        return float(actual) == float(wanted)
+        return float(actual) == float(wanted)  # a number written as text, or the other way round
     except (TypeError, ValueError):
         return str(actual) == str(wanted)

@@ -20,7 +20,7 @@ from typing import Any
 
 from core.app import Investigator
 from core.errors import InputValidationError, SfInvestigatorError, WorkspaceError
-from core.report import _find_section, _sections, markdown_to_html
+from core.report import STATUS_ROW_RE, _find_section, _sections, markdown_to_html
 from core.sf_cli import validate_target_org
 from core.workspace import validate_ticket_key
 
@@ -293,7 +293,7 @@ def save_attachment(inv: Investigator, key: str, name: str, data: bytes) -> dict
     stem, number = clean[:-len(suffix)], 1
     while (attachments / clean).exists() and (attachments / clean).read_bytes() != data:
         number += 1
-        clean = f"{stem}-{number}{suffix}"
+        clean = f"{stem}_{number}{suffix}"  # "_": "follow-up-2.txt" would read as a follow-up
     if (attachments / clean).exists():
         return {"saved": f"attachments/{clean}", "bytes": len(data), "note": "This file was already attached."}
     if len(_attachment_names(folder)) >= MAX_ATTACHMENTS:
@@ -454,7 +454,7 @@ def ticket_status(inv: Investigator, key: str, run: dict[str, Any] | None = None
             validation = inv.validate_report(key)
         except SfInvestigatorError as exc:
             validation = {"ok": False, "problems": [exc.message], "warnings": [], "citations": {"valid": 0, "broken": 0}}
-        match = re.search(r"root cause status\s*\|\s*([^|\n]+)", report_md.read_text(encoding="utf-8", errors="replace"), re.I)
+        match = re.search(STATUS_ROW_RE, report_md.read_text(encoding="utf-8", errors="replace"), re.I)
         root_cause_status = match.group(1).strip() if match else validation.get("root_cause_status")
 
     steps = [

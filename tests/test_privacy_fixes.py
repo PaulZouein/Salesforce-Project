@@ -189,3 +189,33 @@ def test_example_and_system_addresses_are_not(line):
 ])
 def test_phone_numbers_in_the_usual_formats_are_flagged(line, flagged):
     assert bool(_personal_data([line])[1]) is flagged
+
+
+def test_usernames_and_aliases_are_redacted_when_grouped_and_behind_an_owner(project):
+    """Second review: GROUP BY Owner.Username returned the usernames; Owner is typed "Name", not "User"."""
+    inv = investigator(project,
+                       ("GROUP BY Owner.Username", {"totalSize": 1, "records": [
+                           {"attributes": {"type": "AggregateResult"}, "Username": "jdoe@acme.com", "expr0": 3}]}),
+                       ("GROUP BY Owner.Alias", {"totalSize": 1, "records": [
+                           {"attributes": {"type": "AggregateResult"}, "Alias": "jdoe", "expr0": 3}]}),
+                       ("SELECT Id, Owner.Username", {"totalSize": 1, "records": [
+                           {"attributes": {"type": "Case"}, "Id": "500Ws00000C0003IAA",
+                            "Owner": {"attributes": {"type": "Name"}, "Username": "jdoe@acme.com"}}]}))
+    grouped = inv.soql_query("prod", "SELECT Owner.Username, COUNT(Id) FROM Case GROUP BY Owner.Username")
+    assert grouped["records"] == [{"Username": REDACTED, "expr0": 3}]
+    aliases = inv.soql_query("prod", "SELECT Owner.Alias, COUNT(Id) FROM Case GROUP BY Owner.Alias")
+    assert aliases["records"] == [{"Alias": REDACTED, "expr0": 3}]
+    owner = inv.soql_query("prod", "SELECT Id, Owner.Username FROM Case")
+    assert owner["records"][0]["Owner"]["Username"] == REDACTED and "jdoe" not in json.dumps(owner)
+
+
+def test_an_address_in_the_query_text_is_not_saved_and_a_saved_log_is_read_masked(project):
+    """Second review: a WHERE literal reached queries/*.json, and read_file showed a saved log unmasked."""
+    inv = investigator(project, ("07LWs00000L0001MAA", [LOG]))
+    inv.init_ticket(KEY)
+    out = inv.soql_query("prod", "SELECT Id FROM Contact WHERE Email = 'jane.doe@customer.test'", ticket_key=KEY,
+                         save_as="by-mail")
+    assert "jane.doe@customer.test" not in saved(project, out)
+    inv.get_debug_log("prod", "07LWs00000L0001MAA", KEY)
+    shown = inv.read_file(KEY, "logs/07LWs00000L0001MAA.log")["content"]
+    assert "jane.doe@customer.test" not in shown and "[email]" in shown

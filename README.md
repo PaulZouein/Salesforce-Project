@@ -20,9 +20,10 @@ seconds, for about $0.29 at API prices. Click the picture for the whole run, nar
 
 1. **Get it.** On GitHub, **Code → Download ZIP**, and unzip it anywhere. Or:
    `git clone https://github.com/PaulZouein/Salesforce-Project.git`
-2. **Start the demo.** Double-click `start-demo.bat` (Windows) or `start-demo.command` (macOS).
-   The first start installs what it needs into a private `.venv` folder (about a minute, once).
-   Then the page opens in your browser.
+2. **Start it.** Double-click `start.bat` (Windows) or `start.command` (macOS): the one file to
+   run. The first start installs what it needs into a private `.venv` folder (about a minute,
+   once). Then the page opens in your browser. No Salesforce org at hand? Click **Try with the
+   demo orgs** on the page.
 3. **New ticket → Load the sample ticket → Save and continue.** Then either:
    - **Replay the recorded sample**: free, a few seconds, the result of a real earlier run; or
    - **Investigate with Claude Code**: a real investigation, a few minutes. It uses your Claude
@@ -97,7 +98,7 @@ against it, read-only, and can plant the sample bug there to investigate for rea
 | `CLAUDE.md` | The rules the assistant follows in this folder. |
 | `simulator/` | A stand-in for the `sf` executable backed by files, with three simulated orgs. It powers the tests and the demo. It does not execute Apex. |
 | `samples/` | A sample ticket (`DEMO-101`), the planted bug behind it, and the reports real investigations produced. |
-| `tests/` | 881 tests. They need no org and no Salesforce CLI. |
+| `tests/` | 981 tests. They need no org and no Salesforce CLI. |
 
 Each ticket gets its own folder, `tickets/<KEY>/`, which is never committed:
 
@@ -124,8 +125,8 @@ to edit that file. It is re-read on every operation, so no restart is needed.
 | `apply` | The same, and then, with your approval for every single write: deploys to a non-production org, runs tests, re-checks records or logs, iterates, and rolls back if the fix does not hold. |
 
 Investigations started from the web page advise only, whatever the mode: they are not given the
-write tools. Applying a fix is done in Claude Code in the terminal (`claude-here.bat` or
-`claude-here.command`), where each write asks you.
+write tools. Applying a fix is done in Claude Code in the terminal (`start.bat --claude` or
+`sh start.command --claude`), where each write asks you.
 
 All settings, with their defaults (a key you leave out takes its default):
 
@@ -155,10 +156,13 @@ A file that cannot be read, or a value of the wrong type, falls back to the safe
 
 ## What has been verified, and what has not
 
-- **Verified:** the 881 tests on Windows and macOS in CI, through the real subprocess path,
+- **Verified:** the 981 tests on Windows and macOS in CI, through the real subprocess path,
   against the simulated orgs; every Salesforce CLI command, flag and result shape the tool uses,
   against the installed CLI 2.158.7 and its sources; complete AI investigations started from the
   page; the release zip setting itself up from nothing on Windows and macOS.
+- **Reviewed:** two rounds of independent review (safety, correctness, Salesforce behaviour), each
+  finding reproduced as a failing test and then fixed; decisions 80 to 114 in
+  [`docs/DECISIONS.md`](docs/DECISIONS.md) list them, with the few gaps left on purpose.
 - **Not yet verified:** a real Salesforce org (none was reachable while it was built;
   [`docs/LIVE-ORG.md`](docs/LIVE-ORG.md) is how to check), Apex execution (the simulated orgs do
   not run Apex), and a real Windows or macOS desktop: the double-click and the system's warning

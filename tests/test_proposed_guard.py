@@ -36,6 +36,10 @@ NEWLY_BLOCKED = [
     # The word pytest elsewhere no longer excuses a Python call that names a write function.
     "python -m pytest -q && python -c 'from core.app import Investigator; Investigator().update_records()'",
     "python -c 'import pytest; from core.logs import set_trace_flag'",
+    # Second review: a brace group hid the interpreter, and doctest collection from "." reaches tickets/ too.
+    "{ python -c 'from core.app import Investigator; Investigator().update_records()'; }",
+    "python -m pytest --doctest-glob=*.log .",
+    "pytest --doctest-modules",
 ]
 
 NEWLY_ALLOWED = [

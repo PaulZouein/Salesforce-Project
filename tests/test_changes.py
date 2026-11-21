@@ -553,7 +553,9 @@ def test_audit_view_hides_stored_values(apply_inv):
     ("2026-03-01T08:00:00.000+0000", "2026-03-01T08:00:00Z", True),
     ("2026-03-01T09:00:00.000+0100", "2026-03-01T08:00:00Z", True),
     ("2026-03-01T08:00:01.000+0000", "2026-03-01T08:00:00Z", False),
-    ("003Ws00000AbCdEFGH", "003Ws00000AbCdE", True),
+    ("003Ws00000AbCdEIAV", "003Ws00000AbCdE", True),
+    ("003Ws00000AbCdEFGH", "003Ws00000AbCdE", False),  # not its checksum: another text
+    ("00123", "123", False), ("2026-03-01T08:00:00.500Z", "2026-03-01T08:00:00.000+0000", False),
     ("003Ws00000AbCdXFGH", "003Ws00000AbCdE", False),
     ("High", "Medium", False),
     ("5.0", 5, True),

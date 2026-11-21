@@ -37,6 +37,8 @@ PERSON_OBJECTS = frozenset({"contact", "lead", "user", "individual", "employee",
 #: Relationships whose ``Name`` is usually a person's: what an aggregate grouped by ``Owner.Name`` returns.
 PERSON_RELATIONSHIPS = frozenset({"owner", "createdby", "lastmodifiedby", "who", "contact", "lead", "user",
                                   "manager", "delegatedapprover", "assignee", "requester"})
+#: Fields of a user that identify the person as surely as the name does.
+_USER_HANDLES = frozenset({"username", "communitynickname", "alias"})
 
 _API_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*\Z")
 #: Clauses that make a "read" change the org: FOR UPDATE locks records; FOR VIEW and FOR REFERENCE update the
@@ -46,6 +48,7 @@ _FORBIDDEN_CLAUSE = re.compile(r"\b(FOR\s+(UPDATE|VIEW|REFERENCE)|UPDATE\s+(TRAC
 #: Aggregate functions: a query of only aggregates without GROUP BY returns one row (or, for COUNT(), a count).
 _AGGREGATE_RE = re.compile(r"\b(COUNT|COUNT_DISTINCT|SUM|AVG|MIN|MAX)\s*\(", re.IGNORECASE)
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)\b", re.IGNORECASE)
+_EMAIL_LITERAL = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _TAIL_CLAUSE_RE = re.compile(r"\b(OFFSET\s+\d+|ALL\s+ROWS)\b", re.IGNORECASE)
 
 
@@ -210,8 +213,8 @@ class Redactor:
             return True
         if name == "name" and (person or (object_type and object_type.lower() in PERSON_OBJECTS)):
             return True
-        if name in ("username", "communitynickname", "alias") and object_type and object_type.lower() == "user":
-            return True
+        if name in _USER_HANDLES and object_type and object_type.lower() in ("user", "name"):
+            return True  # "Name" is the polymorphic owner: a user or a queue
         if object_type == "AggregateResult":
             return self._personal_column(name)
         return False
@@ -224,6 +227,10 @@ class Redactor:
         parts = source.split(".")
         if PERSONAL_FIELD_PATTERN.search(parts[-1]):
             return True
+        if parts[-1].lower() in _USER_HANDLES:  # GROUP BY Owner.Username / Owner.Alias names the people
+            if len(parts) > 1:
+                return parts[-2].lower() in PERSON_RELATIONSHIPS or parts[-2].lower().endswith("__r")
+            return (self.from_object or "").lower() in ("user", "name")
         if parts[-1].lower() != "name":
             return False
         if len(parts) > 1:
@@ -408,7 +415,8 @@ def run_query(
         path.write_text(
             json.dumps(
                 {
-                    "query": final_query,
+                    # A literal in the query (WHERE Email = '...') would put the address in the evidence file.
+                    "query": _EMAIL_LITERAL.sub("[email]", final_query),
                     "api": out["api"],
                     "org": org,
                     "executed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),

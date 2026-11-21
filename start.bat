@@ -1,6 +1,6 @@
 @echo off
 rem Salesforce Ticket Investigator: set up (first time) and start. Windows: double-click this file.
-rem The same with the simulated demo orgs: start-demo.bat.
+rem The one file to run. No org at hand? Choose Try with the demo orgs on the page (or: start.bat --demo).
 setlocal
 cd /d "%~dp0"
 title Salesforce Ticket Investigator

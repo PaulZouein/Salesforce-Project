@@ -32,7 +32,8 @@ import re
 import sys
 
 PROTECTED = ("sfti.config.json", ".mcp.json", ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/")
-WRAPPERS = {"sudo", "env", "time", "nohup", "xargs", "command", "exec", "builtin", "then", "do", "else"}
+WRAPPERS = {"sudo", "env", "time", "nohup", "xargs", "command", "exec", "builtin", "then", "do", "else",
+            "{", "!", "if", "while", "until"}
 RUNNERS = {"uv", "poetry", "pipenv", "pdm", "hatch", "conda"}  # "<runner> run <command>"
 READ_ONLY_COMMANDS = {"cat", "head", "tail", "less", "more", "grep", "rg", "wc", "ls", "stat", "file", "diff", "git"}
 CLI_NAMES = {"sf", "sfdx"}
@@ -108,6 +109,11 @@ def check_bash(command: str) -> None:
         normalized = segment.replace("\\", "/")
         if head in ("cd", "pushd") and re.search(r"(^|[\s/\"'])tickets(/|\s|$|[\"'])", normalized):
             inside_tickets = True
+        if runs_tests(words) and any(w.startswith("--doctest") for w in words):
+            raise Blocked(
+                "Blocked: doctest collection runs text found in files, and saved debug logs and attachments under "
+                "tickets/ are text from outside. Run the test files instead."
+            )
         executes = head in INTERPRETERS or runs_python(words)
         if executes and (inside_tickets or re.search(r"(^|[\s\"'=/])tickets/", normalized)):
             raise Blocked(

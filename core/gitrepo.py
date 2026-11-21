@@ -6,6 +6,8 @@ configuration is needed and the user's own identity is not written into ticket w
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,7 +23,19 @@ _IDENTITY = [
     "-c", "core.safecrlf=false",
     "-c", "core.quotepath=false",
     "-c", "core.longpaths=true",  # Windows: deep metadata paths under a long project folder
+    # Nothing in a ticket's repository may make git run a program: these override its own settings.
+    "-c", "core.fsmonitor=false",
+    "-c", f"core.hooksPath={os.devnull}",
+    "-c", "core.pager=cat",
 ]
+
+# Settings that make git run a program and that "-c" cannot switch off by name (filter and diff drivers
+# are named by the repository). The tool never writes them; finding one means someone else did.
+_RUNS_A_PROGRAM = re.compile(
+    r"^\s*\[\s*(filter|diff|merge|include|includeif|alias|credential|uploadpack)\b"
+    r"|^\s*(fsmonitor|hookspath|sshcommand|editor|pager|askpass|gitproxy|textconv|command|clean|smudge|process)\s*=",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 class GitRepo:
@@ -34,6 +48,7 @@ class GitRepo:
         exe = shutil.which("git")
         if not exe:
             raise GitError("git was not found on PATH.", hint="Install git and reopen your terminal.")
+        self._check_settings()
         try:
             proc = subprocess.run(
                 [exe, *_IDENTITY, *args],
@@ -54,6 +69,21 @@ class GitRepo:
                 f"git {' '.join(args[:2])} failed: {(proc.stderr or proc.stdout).strip()[:500]}",
             )
         return proc
+
+    def _check_settings(self) -> None:
+        """Refuse to run git in a repository whose own settings would make it run a program."""
+        config = self.path / ".git" / "config"
+        try:
+            text = config.read_text(encoding="utf-8", errors="replace") if config.is_file() else ""
+        except OSError:
+            return
+        found = _RUNS_A_PROGRAM.search(text)
+        if found:
+            raise GitError(
+                f"The git settings of {self.path.name} were changed outside the tool ({found.group(0).strip()!r} in "
+                ".git/config): git would run a program from them. Nothing was run.",
+                hint="Remove that setting from the file yourself, or delete the folder and retrieve again.",
+            )
 
     # -- repository ----------------------------------------------------------------------
 

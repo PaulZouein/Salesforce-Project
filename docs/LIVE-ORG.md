@@ -122,7 +122,7 @@ the records, then roll back. Nothing happens without your approval of each step.
 
 1. In `sfti.config.json`, set `"mode": "apply"` and `"allow_developer_edition_writes": true`
    (you edit this file yourself; the assistant cannot).
-2. Open Claude Code in the project folder: `claude-here.bat` or `claude-here.command`.
+2. Open Claude Code in the project folder: `start.bat --claude` (Windows) or `sh start.command --claude` (macOS), in a terminal in the folder.
 3. Type: *Continue LIVE-1 in apply mode on my-dev: deploy the fix, run CaseEscalationServiceTest,
    check the cases, then roll back the deploy.*
 4. Approve or refuse each step when it asks.

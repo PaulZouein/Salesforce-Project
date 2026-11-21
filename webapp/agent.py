@@ -68,6 +68,9 @@ ECONOMY_CACHE_TTL = "5m"  # Claude Code's CLAUDE_CODE_PROMPT_CACHE_TTL; on a sub
 #: covers every file-writing tool (Write included); checked with Claude Code 2.1.326. With the "dontAsk" mode,
 #: a write anywhere else (the safety code in core/, the settings, CLAUDE.md) is refused without asking.
 WRITABLE = "Edit(tickets/**)"
+#: ...except the git settings of the ticket's metadata repository, which the tool runs git in: a command
+#: planted there (core.fsmonitor, a filter or diff driver) would run on the next retrieve or deploy.
+NOT_WRITABLE = ("Edit(tickets/**/.git/**)", "Edit(tickets/**/.gitattributes)", "Edit(tickets/**/.gitmodules)")
 PERMISSION_MODE = "dontAsk"
 
 #: What each tool call means, in words a non-developer can follow.
@@ -157,7 +160,8 @@ def build_command(executable: str, root: Path, model: str | None = None, *, econ
     server_config = Path(root) / ".mcp.json"
     if server_config.is_file():
         command += ["--mcp-config", str(server_config), "--strict-mcp-config"]
-    command += ["--allowedTools", ",".join(allowed + [WRITABLE]), "--disallowedTools", ",".join(refused)]
+    command += ["--allowedTools", ",".join(allowed + [WRITABLE]),
+                "--disallowedTools", ",".join(refused + list(NOT_WRITABLE))]
     given = [name for name in BUILTIN_TOOLS if name not in BUILTIN_REFUSED
              and not (economy and (name in ECONOMY_REFUSED or name == "Skill"))]
     command += ["--tools", ",".join(given)]

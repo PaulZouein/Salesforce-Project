@@ -22,8 +22,7 @@ import make_release  # noqa: E402
 from webapp import __main__ as entry  # noqa: E402
 from webapp.server import App, create_server  # noqa: E402
 
-START_FILES = ("start.bat", "start-demo.bat", "claude-here.bat", "start.command", "start-demo.command",
-               "claude-here.command")
+START_FILES = ("start.bat", "start.command")  # the one file to run, on each system
 
 
 # --- the start scripts ----------------------------------------------------------------------
@@ -35,10 +34,8 @@ def test_start_files_exist_for_both_systems_and_lead_to_the_same_set_up():
         assert len(text.splitlines()) < 45, f"{name} should stay short enough to read before running it"
     assert "scripts\\bootstrap.py %*" in (ROOT / "start.bat").read_text(encoding="utf-8")
     assert 'scripts/bootstrap.py "$@"' in (ROOT / "start.command").read_text(encoding="utf-8")
-    for name, option in (("start-demo.bat", "--demo"), ("claude-here.bat", "--claude"),
-                         ("start-demo.command", "--demo"), ("claude-here.command", "--claude")):
-        text = (ROOT / name).read_text(encoding="utf-8")
-        assert option in text and ("start.bat" in text or "start.command" in text)
+    assert not any((ROOT / name).exists() for name in ("start-demo.bat", "claude-here.bat", "start-demo.command",
+                                                        "claude-here.command"))  # one file to run, not four
     for name in START_FILES:
         if name.endswith(".command"):
             assert (ROOT / name).read_text(encoding="utf-8").startswith("#!/bin/sh\n")
@@ -315,3 +312,23 @@ def test_release_carries_the_guides_but_not_the_video(tmp_path):
     assert "samples/DEMO-101/live-run/first-run/report.md" in names
     assert not [name for name in names if name.endswith((".mp4", ".webm", ".gif"))]
     assert "SECURITY.md" in names and not [name for name in names if "/worktrees/" in "/" + name]
+
+
+def test_the_release_ships_the_hardened_guard_and_one_file_to_run(tmp_path):
+    """The zip carries the generator's current settings and the hardened hook (decision 103), not the copies
+    still waiting for the owner in this folder, and exactly one launcher per system."""
+    archive = make_release.build(out_dir=tmp_path)
+    prefix = make_release.FOLDER_NAME + "/"
+    with zipfile.ZipFile(archive) as zipped:
+        names = set(zipped.namelist())
+        settings = json.loads(zipped.read(prefix + ".claude/settings.json"))
+        hook = zipped.read(prefix + ".claude/hooks/guard.py")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import generate_settings
+
+    assert settings == generate_settings.build(guard=True)
+    assert not any("pytest" in rule or "simulator" in rule for rule in settings["permissions"]["allow"])
+    assert hook == (ROOT / "scripts" / "owner" / "guard.py").read_bytes()
+    launchers = sorted(n[len(prefix):] for n in names if n.count("/") == 1 and n.endswith((".bat", ".command")))
+    assert launchers == ["start.bat", "start.command"]
+    assert not any("/scripts/owner/" in n for n in names)

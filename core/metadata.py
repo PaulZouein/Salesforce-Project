@@ -103,6 +103,9 @@ def _relative_to_repo(repo_path: Path, file_path: str) -> str | None:
         return None
 
 
+_EMAIL_IN_TEXT = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+
+
 def _raise_unless_retrieved(result: dict[str, Any], wait_minutes: int) -> None:
     """A retrieve that failed in the org still exits 0 with ``--json``: it must not look like an empty one.
 
@@ -349,6 +352,9 @@ def read_file(
     if resolved.stat().st_size > MAX_LOG_FILE_BYTES:
         raise WorkspaceError(f"{path!r} is too large to read through this tool.")
     lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
+    if resolved.parent.name == "logs" and resolved.suffix == ".log":
+        # A debug log quotes addresses (users, customers); get_debug_log masks them, so this way does too.
+        lines = [_EMAIL_IN_TEXT.sub("[email]", line) for line in lines]
     start = max(1, int(start_line))
     max_lines = max(1, min(int(max_lines), 2000))
     last = len(lines) if end_line is None else min(len(lines), int(end_line))

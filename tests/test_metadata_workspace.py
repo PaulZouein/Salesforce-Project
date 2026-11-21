@@ -236,3 +236,35 @@ def test_a_trailing_newline_is_refused_by_the_input_checks(check, value):
     with pytest.raises(InputValidationError):
         validate(value)
     validate(value.strip())
+
+
+@pytest.mark.parametrize("setting", [
+    "[core]\n\tfsmonitor = touch {marker}\n",
+    '[filter "x"]\n\tclean = touch {marker}\n',
+    '[diff "x"]\n\ttextconv = touch {marker}\n',
+    "[include]\n\tpath = /tmp/elsewhere\n",
+])
+def test_git_refuses_a_repository_whose_settings_would_run_a_program(tmp_path, setting):
+    """An unattended run may write under tickets/: a command planted in .git/config must never run."""
+    from core.errors import GitError
+    from core.gitrepo import GitRepo
+
+    repo = GitRepo(tmp_path / "metadata")
+    repo.init()
+    (repo.path / "a.txt").write_text("x", encoding="utf-8")
+    marker = tmp_path / "ran"
+    with open(repo.path / ".git" / "config", "a", encoding="utf-8") as config:
+        config.write(setting.format(marker=marker.as_posix()))
+    (repo.path / ".gitattributes").write_text("* filter=x diff=x\n", encoding="utf-8")
+    with pytest.raises(GitError) as refused:
+        repo.commit_all("planted")
+    assert "Nothing was run" in refused.value.message and not marker.exists()
+
+
+def test_a_fresh_ticket_repository_passes_the_settings_check(tmp_path):
+    from core.gitrepo import GitRepo
+
+    repo = GitRepo(tmp_path / "metadata")
+    repo.init()
+    (repo.path / "a.txt").write_text("x", encoding="utf-8")
+    assert repo.commit_all("first") and repo.is_clean()

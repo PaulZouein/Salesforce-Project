@@ -56,7 +56,9 @@ def _flag_same_name(out: dict[str, Any], rows: list[dict[str, Any]], id_field: s
     out["same_name_warning"] = (
         f"The name {out['component']!r} matched {len(found)} different components (Ids in matched_components), "
         "for example fields of the same name on different objects or a managed package's component. Their "
-        "dependencies are merged in these lists: pass component_type, and confirm each one with search_metadata."
+        "dependencies are merged in these lists. Pass component_type when their types differ; when they do not "
+        "(Account.Tier__c and Case.Tier__c are both CustomField), tell them apart by those Ids with tooling_query, "
+        "and confirm each one with search_metadata."
     )
 
 

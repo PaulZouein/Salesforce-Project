@@ -22,8 +22,9 @@ python -m webapp --port 9000 --no-browser
 It opens `http://127.0.0.1:8765/`, or the next free port when another program uses that one (the
 address is printed). Starting it a second time opens the copy that is already running instead of
 a second one on the same tickets. Stop it with Ctrl+C. The `start` scripts do the same after
-setting up a private Python environment in `.venv`; `claude-here.bat` / `claude-here.command`
-open Claude Code in the folder with the investigator's tools, for working in the terminal.
+setting up a private Python environment in `.venv`; `start.bat --claude` / `sh start.command
+--claude` open Claude Code in the folder with the investigator's tools, for working in the terminal,
+and `--demo` starts on the demo orgs.
 
 | Page | What you do there |
 |---|---|
@@ -67,7 +68,7 @@ terminal).
 
 **From the page the investigator only advises**, whatever the mode in `sfti.config.json`. You get
 the fix as a diff. To have it deployed to a sandbox and tested, use Claude Code itself in `apply`
-mode (`claude-here`), where each write asks you.
+mode (`start.bat --claude`), where each write asks you.
 
 **Choose the model** next to the Investigate button: Claude Code's default, Sonnet (quicker,
 uses less of your Claude usage) or Opus. `SFTI_CLAUDE_MODEL` sets the default for every ticket.
@@ -232,8 +233,8 @@ for instance). Both are reasons the memory is treated as a lead.
 
 ## Try the demo from a terminal, without the page
 
-The quickest way is the page: double-click `start-demo.bat` or `start-demo.command` (see the
-[README](../README.md)). This is the same demo driven from Claude Code in a terminal.
+The quickest way is the page: double-click `start.bat` or `start.command`, then **Try with the
+demo orgs** (see the [README](../README.md)). This is the same demo driven from Claude Code in a terminal.
 
 
 You need Python 3.11 or newer, git and Claude Code. The simulated orgs contain a planted bug and a

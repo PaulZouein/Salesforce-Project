@@ -22,13 +22,14 @@ FOLDER_NAME = "salesforce-ticket-investigator"
 #: Top-level files and folders that make up a release.
 INCLUDE = (
     "QUICKSTART.md", "README.md", "SECURITY.md", "CLAUDE.md", "pyproject.toml", "sfti.config.json", ".mcp.json",
-    "start.bat", "start-demo.bat", "claude-here.bat", "start.command", "start-demo.command", "claude-here.command",
+    "start.bat", "start.command",  # the one file to run, on Windows and on macOS
     ".claude", "core", "mcp_server", "simulator", "webapp", "samples", "scripts", "docs",
 )
 #: Never shipped, wherever they are.
 EXCLUDED_DIRECTORIES = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv", "venv", "state", "tickets",
                                   "knowledge", "audit", "usage", "live-check", "dist", "build", "node_modules", ".sf", ".sfdx",
-                                  "worktrees"})  # .claude/worktrees: copies of the project made by Claude Code's agents
+                                  "worktrees",  # .claude/worktrees: copies of the project made by Claude Code's agents
+                                  "owner"})  # scripts/owner: what the release already applies (hardened_safety_files)
 EXCLUDED_FILES = frozenset({".DS_Store", "settings.local.json", "Thumbs.db"})
 #: Not shipped: leftovers, and the demo videos and animation (linked from the README; the zip stays small).
 EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".egg-info", ".log.tmp", ".mp4", ".webm", ".gif")
@@ -78,6 +79,22 @@ def check_settings(root: Path = ROOT) -> list[str]:
     return problems
 
 
+def hardened_safety_files(root: Path = ROOT) -> dict[str, bytes]:
+    """The guard files a release ships: the generator's current permission settings (pytest and the simulator
+    ask before they run) and the hardened hook prepared in scripts/owner/ (decision 103). Both only ever add
+    protection; the project folder itself keeps whatever the owner has applied."""
+    sys.path.insert(0, str(root / "scripts"))
+    try:
+        import generate_settings
+    finally:
+        sys.path.pop(0)
+    out = {".claude/settings.json": generate_settings.render(guard=True).encode("utf-8")}
+    proposed = root / "scripts" / "owner" / "guard.py"
+    if proposed.is_file():
+        out[".claude/hooks/guard.py"] = proposed.read_bytes()
+    return out
+
+
 def build(root: Path = ROOT, out_dir: Path | None = None) -> Path:
     problems = check_settings(root)
     files = release_files(root)
@@ -88,9 +105,10 @@ def build(root: Path = ROOT, out_dir: Path | None = None) -> Path:
     out_dir = Path(out_dir) if out_dir else root / "dist"
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / f"{FOLDER_NAME}-{project_version(root)}.zip"
+    overrides = hardened_safety_files(root)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for relative in files:
-            data = (root / relative).read_bytes()
+            data = overrides.get(relative.as_posix()) or (root / relative).read_bytes()
             if relative.suffix == ".bat":  # Windows command files need Windows line endings
                 data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
             elif relative.suffix in (".command", ".sh"):

@@ -348,3 +348,21 @@ def test_wrapped_list_items_stay_one_item():
     html = markdown_to_html("- **First:** starts here\n  and continues on the next line.\n- Second\n\n1. One\n   still one.\n2. Two")
     assert "<li><strong>First:</strong> starts here and continues on the next line.</li>" in html
     assert "<li>One still one.</li>" in html and html.count("<p>") == 0
+
+
+@pytest.mark.parametrize("row, status, needs_citation", [
+    ("| Root cause status | Confirmed (not reproduced in a sandbox) |", "confirmed", True),
+    ("| **Root cause status** | **Confirmed** |", "confirmed", True),
+    ("| Root cause status | Not confirmed |", "not confirmed", False),
+])
+def test_the_status_row_is_read_by_its_first_word_and_in_bold(ticket, row, status, needs_citation):
+    """Second review: "not" anywhere in the row turned a confirmed report into an unconfirmed one."""
+    import re
+
+    text = GOOD_REPORT.split("## Evidence")[0]
+    text = re.sub(r"^\| Root cause status \|.*$", row.replace("\\", "\\\\"), text, flags=re.M)
+    text += "## Evidence\n\nNone collected.\n\n## Root cause\n\nThe loop returns too early. Missing: a log.\n\n" \
+            "## Fix\n\nx\n\n## Test results\n\nx\n\n## Risks\n\nx\n\n## Open questions\n\nx\n"
+    out = ticket(text)
+    assert out["root_cause_status"] == status
+    assert (any("cites no artifact" in p for p in out["problems"])) is needs_citation

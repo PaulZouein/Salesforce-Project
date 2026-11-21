@@ -20,12 +20,14 @@ tells you what, with the exact command for your system.
 
 ## 2. Start it
 
-Unzip the folder anywhere, then:
+Unzip the folder anywhere, then double-click the one file to run:
 
-| | Try it first, no Salesforce org needed | With your own orgs |
-|---|---|---|
-| **Windows** | double-click `start-demo.bat` | double-click `start.bat` |
-| **macOS** | double-click `start-demo.command` | double-click `start.command` |
+| **Windows** | `start.bat` |
+|---|---|
+| **macOS** | `start.command` |
+
+No Salesforce org yet, or just looking? On the page, click **Try with the demo orgs**: simulated
+orgs with a planted bug, no Salesforce account needed. **Use my own Salesforce orgs** switches back.
 
 The first start takes about a minute (it installs what it needs into a `.venv` folder next to
 the files). Then your browser opens on `http://127.0.0.1:8765` (the address is also shown in the window). Keep the small window that
@@ -81,7 +83,7 @@ your computer.
 - **What an investigation started from the page can do**: read from the org and write in the
   ticket's folder. It is not given the tools that change an org, a shell, or web access.
 - **Deploying a fix to a sandbox** is done from the terminal, where you approve each step:
-  double-click `claude-here.bat` (Windows) or `claude-here.command` (macOS). See *The two modes* in
+  in a terminal in this folder, `start.bat --claude` (Windows) or `sh start.command --claude` (macOS). See *The two modes* in
   `README.md`.
 - **What it costs**: the *Claude usage* box (sidebar, or a pill at the bottom on a phone) shows
   the running investigation's tokens and estimated price as it works, today's total, and how much

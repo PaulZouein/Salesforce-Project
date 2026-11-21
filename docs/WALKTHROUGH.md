@@ -14,8 +14,8 @@ the investigation runs is shown faster; everything else is real time.
 [`docs/demo/real-investigation.mp4`](demo/real-investigation.mp4): the ticket arrives as a PDF,
 Claude Code investigates live, and the root cause is confirmed in 82 seconds.
 
-To follow along on your own computer: double-click `start-demo.bat` (Windows) or
-`start-demo.command` (macOS). [`QUICKSTART.md`](../QUICKSTART.md) has what you need installed.
+To follow along on your own computer: double-click `start.bat` (Windows) or `start.command`
+(macOS), then **Try with the demo orgs**. [`QUICKSTART.md`](../QUICKSTART.md) has what you need installed.
 
 ## 1. Get started: the page checks your computer
 
@@ -159,5 +159,5 @@ your plan's limits.
 - **A real org.** Everything above ran on the simulated orgs. On a real org the steps are the
   same; time and usage are higher, and a few Salesforce behaviours are still unverified (the
   [VERIFICATION.md](VERIFICATION.md) lists them).
-- **Applying a fix.** That is done from Claude Code in the terminal (`claude-here`), in `apply`
+- **Applying a fix.** That is done from Claude Code in the terminal (`start.bat --claude`), in `apply`
   mode, with your approval for each step. [VERIFICATION.md](VERIFICATION.md) shows the full loop on the simulated sandbox.

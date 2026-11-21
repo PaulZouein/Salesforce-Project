@@ -269,7 +269,8 @@ _TARGET_FLAG_SPELLINGS = ("--target-org", "-o", "--targetusername", "-u")
 
 def _single_target_index(args: Sequence[str]) -> int | None:
     """Index of the value of the only target flag, or ``None`` when there is not exactly one plain one."""
-    found = [i for i, arg in enumerate(args) if arg.split("=", 1)[0] in _TARGET_FLAG_SPELLINGS]
+    found = [i for i, arg in enumerate(args)
+             if arg.split("=", 1)[0] in _TARGET_FLAG_SPELLINGS or re.match(r"-[ou]\S", arg)]  # also "-oprod"
     if len(found) != 1 or args[found[0]] != "--target-org" or found[0] + 1 >= len(args):
         return None
     return found[0] + 1

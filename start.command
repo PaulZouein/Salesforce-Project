@@ -1,6 +1,6 @@
 #!/bin/sh
 # Salesforce Ticket Investigator: set up (first time) and start. macOS: double-click this file.
-# The same with the simulated demo orgs: start-demo.command.
+# The one file to run. No org at hand? Choose Try with the demo orgs on the page (or: --demo).
 # The folder this file is in, without needing any other program to work it out.
 cd "${0%/*}" 2>/dev/null || cd "$(dirname "$0")" || exit 1
 

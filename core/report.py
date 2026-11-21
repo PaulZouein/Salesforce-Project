@@ -153,6 +153,8 @@ _CITATION_RE = re.compile(
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 #: Phone numbers, with an optional country code and an optional area code in parentheses: "+44 20 7946 0958",
 #: "(415) 555-0132", "+1 (415) 555-0132". Dates, case numbers without separators and versions are filtered below.
+#: The header row "| Root cause status | Confirmed |", also with the label or the value in bold.
+STATUS_ROW_RE = r"root cause status\**\s*\|\s*\**\s*([^|\n*]+)"
 _PHONE_RE = re.compile(r"(?<![\w.\-])(?:\+\d{1,3}[\s.\-]?)?(?:\(\d{1,4}\)\s?)?\d(?:[\s.\-]{0,2}\d){6,12}(?![\w\-])")
 _SPECULATION_RE = re.compile(
     r"\b(probably|likely|might|may be|maybe|seems|appears to|i think|i believe|possibly|presumably|"
@@ -250,7 +252,7 @@ def report_digest(path: Path, *, max_chars: int = 500) -> dict[str, Any] | None:
     except OSError:
         return None
     lines = markdown.splitlines()
-    status = re.search(r"root cause status\s*\|\s*([^|\n]+)", markdown, re.IGNORECASE)
+    status = re.search(STATUS_ROW_RE, markdown, re.IGNORECASE)
     title = next((line[2:].strip() for line in lines if line.startswith("# ")), None)
     span = _find_section(_sections(lines), "Root cause")
     paragraph: list[str] = []
@@ -378,14 +380,16 @@ def validate_report(workspace: Workspace, ticket_key: str, filename: str = "repo
     root = _find_section(sections, "Root cause")
     evidence = _find_section(sections, "Evidence")
     full_text = "\n".join(lines)
-    status_match = re.search(r"root cause status\s*\|\s*([^|\n]+)", full_text, re.IGNORECASE)
+    status_match = re.search(STATUS_ROW_RE, full_text, re.IGNORECASE)
     status = status_match.group(1).strip().lower() if status_match else ""
     root_text = "\n".join(lines[root[0] - 1: root[1] - 1]) if root else ""
     if status_match:
         # The header row decides. The section may well say "the flow hypothesis was not confirmed"
         # about a hypothesis it ruled out, in a report whose root cause is confirmed.
-        not_confirmed = bool(re.search(r"\bnot\b|\bunconfirmed\b|\bunknown\b", status))
-        confirmed = not not_confirmed and "confirmed" in status
+        # Its first word decides: "Confirmed (not reproduced in a sandbox)" is confirmed.
+        first = (re.findall(r"[a-z]+", status) or [""])[0]
+        not_confirmed = first in ("not", "unconfirmed", "unknown", "pending", "tbd", "none", "open")
+        confirmed = not not_confirmed and "confirm" in status
     else:
         not_confirmed = "not confirmed" in root_text.lower()
         confirmed = not not_confirmed and bool(root)
@@ -501,7 +505,7 @@ def list_tickets(workspace: Workspace) -> dict[str, Any]:
         status = None
         report = folder / "report.md"
         if report.is_file():
-            match = re.search(r"root cause status\s*\|\s*([^|\n]+)", report.read_text(encoding="utf-8", errors="replace"),
+            match = re.search(STATUS_ROW_RE, report.read_text(encoding="utf-8", errors="replace"),
                               re.IGNORECASE)
             status = match.group(1).strip() if match else "report present"
         tickets.append({

@@ -718,10 +718,10 @@ def test_files_can_be_attached_to_a_ticket(web, project):
 
     names = [web.post("/api/tickets/DEMO-101/attachments", {"name": name, "content_base64": shot(n)})[1]["saved"]
              for n, name in enumerate(["Снимок.png", "ошибка 1.png", "скрин 1.png", "x" * 150 + ".png"])]
-    assert names == ["attachments/attachment.png", "attachments/1.png", "attachments/1-2.png",
+    assert names == ["attachments/attachment.png", "attachments/1.png", "attachments/1_2.png",
                      "attachments/" + "x" * 90 + ".png"]
     again = web.post("/api/tickets/DEMO-101/attachments", {"name": "скрин 1.png", "content_base64": shot(2)})[1]
-    assert again["saved"] == "attachments/1-2.png" and "already attached" in again["note"]
+    assert again["saved"] == "attachments/1_2.png" and "already attached" in again["note"]
 
     text = base64.b64encode(b"hello").decode()
     for body, fragment in (

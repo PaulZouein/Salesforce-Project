@@ -30,9 +30,9 @@ def main() -> int:
         folder = Path(tmp) / "unpacked" / make_release.FOLDER_NAME
         print(f"Unpacked {archive.name} ({archive.stat().st_size / 1_000_000:.1f} MB) into an empty folder.", flush=True)
         if os.name == "nt":
-            command = ["cmd", "/c", "start-demo.bat", "--check"]
+            command = ["cmd", "/c", "start.bat", "--demo", "--check"]
         else:
-            command = ["sh", "./start-demo.command", "--check"]
+            command = ["sh", "./start.command", "--demo", "--check"]
         # No keyboard: a start script that stops to ask something fails here instead of waiting.
         result = subprocess.run(command, cwd=str(folder), stdin=subprocess.DEVNULL)
         print(f"Start script finished with code {result.returncode}.", flush=True)
