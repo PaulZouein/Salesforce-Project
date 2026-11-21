@@ -33,8 +33,9 @@ def _run() -> None:
     if python is not None:
         args = [str(python), "-m", "mcp_server", *sys.argv[1:]]
         if os.name == "nt":
-            # Standard input and output are inherited: the MCP channel passes straight through.
-            raise SystemExit(subprocess.call(args))
+            # Passed on explicitly: Windows gives a child the parent's pipes only when told to, and the MCP
+            # channel is those pipes.
+            raise SystemExit(subprocess.call(args, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr))
         os.execv(str(python), args)
     from .server import main
 

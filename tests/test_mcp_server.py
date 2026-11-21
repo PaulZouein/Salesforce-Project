@@ -297,7 +297,14 @@ def test_a_python_without_the_packages_hands_over_to_the_projects_venv(tmp_path)
     assert subprocess.run([str(bare), "-c", "import mcp"], capture_output=True).returncode != 0
     hello = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}
-    done = subprocess.run([str(bare), "-m", "mcp_server"], cwd=project, input=json.dumps(hello) + "\n",
-                          capture_output=True, text=True, timeout=60)
-    answer = json.loads(done.stdout.splitlines()[0])
-    assert answer["id"] == 1 and "serverInfo" in answer["result"], done.stderr[-800:]
+    from core.sf_cli import _kill_tree
+
+    process = subprocess.Popen([str(bare), "-m", "mcp_server"], cwd=project, stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        out, err = process.communicate(json.dumps(hello) + "\n", timeout=60)
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)  # the handed-over server is a child of this one: end both
+        out, err = process.communicate(timeout=30)
+    answer = json.loads(out.splitlines()[0])
+    assert answer["id"] == 1 and "serverInfo" in answer["result"], err[-800:]
