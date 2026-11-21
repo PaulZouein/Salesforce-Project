@@ -281,3 +281,23 @@ def test_call_tool_refuses_every_write_tool(sim, project, name):
     assert result.returncode == 3 and "write tool" in result.stderr and result.stdout == ""
     assert sim.fingerprint("sandbox") == before
     assert not (project.root / "audit").exists()  # refused before anything was even constructed
+
+
+def test_a_python_without_the_packages_hands_over_to_the_projects_venv(tmp_path):
+    """Claude Code opened from an editor starts "python -m mcp_server" with whatever python it finds."""
+    import shutil
+    import venv
+
+    project = tmp_path / "project"
+    for package in ("mcp_server", "core"):
+        shutil.copytree(ROOT / package, project / package, ignore=shutil.ignore_patterns("__pycache__"))
+    venv.create(project / ".venv", system_site_packages=True, with_pip=False)  # has the packages
+    venv.create(tmp_path / "bare", with_pip=False)                              # does not
+    bare = tmp_path / "bare" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    assert subprocess.run([str(bare), "-c", "import mcp"], capture_output=True).returncode != 0
+    hello = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}
+    done = subprocess.run([str(bare), "-m", "mcp_server"], cwd=project, input=json.dumps(hello) + "\n",
+                          capture_output=True, text=True, timeout=60)
+    answer = json.loads(done.stdout.splitlines()[0])
+    assert answer["id"] == 1 and "serverInfo" in answer["result"], done.stderr[-800:]

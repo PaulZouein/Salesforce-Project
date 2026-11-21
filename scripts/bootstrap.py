@@ -61,12 +61,23 @@ def ensure_installed(python: Path) -> None:
     except OSError:
         pass
     say("Installing the investigator (about a minute, once) ...")
-    result = subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "--quiet",
-                             "--editable", str(ROOT)])
+    command = [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--quiet", "--editable", str(ROOT)]
+    result = subprocess.run(command)
+    if result.returncode != 0:
+        # A company network that inspects HTTPS signs pages with its own certificate, which the computer
+        # trusts but Python's own list does not: pip can use the computer's certificate store instead.
+        say()
+        say("Trying again with this computer's own certificates (company networks often need that) ...")
+        result = subprocess.run(command[:4] + ["--use-feature=truststore"] + command[4:])
     if result.returncode != 0:
         say()
-        say("The installation did not finish. The usual cause is no internet connection, or a company")
-        say("network that blocks pypi.org. Fix that and start again; nothing is half-installed.")
+        say("The installation did not finish. The usual causes:")
+        say("  - no internet connection;")
+        say("  - a company network that blocks pypi.org, or needs a proxy. Ask IT for the proxy address,")
+        say("    then start again from a terminal in this folder with it set, for example:")
+        say("      Windows:  set HTTPS_PROXY=http://proxy.example.com:8080   then   start.bat")
+        say("      macOS:    HTTPS_PROXY=http://proxy.example.com:8080 sh start.command")
+        say("Nothing is half-installed: fix that and start again.")
         raise SystemExit(1)
     STAMP.write_text(wanted + "\n", encoding="utf-8")
 

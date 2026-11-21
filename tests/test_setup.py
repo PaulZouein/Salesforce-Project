@@ -105,8 +105,20 @@ def test_a_failed_install_is_explained_and_tried_again_next_time(fake_project, m
     monkeypatch.setattr(bootstrap.subprocess, "run", lambda command, **kw: subprocess.CompletedProcess(command, 1))
     with pytest.raises(SystemExit) as stopped:
         bootstrap.ensure_installed(Path("the-python"))
-    assert stopped.value.code == 1 and "pypi.org" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert stopped.value.code == 1 and "pypi.org" in out and "HTTPS_PROXY" in out
     assert not bootstrap.STAMP.exists()          # so the next start installs again
+
+
+def test_a_failed_install_is_tried_again_with_the_computers_certificates(fake_project, monkeypatch):
+    """A company network that inspects HTTPS: the computer trusts its certificate, Python's own list does not."""
+    (fake_project / ".venv").mkdir()
+    calls = []
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda command, **kw: calls.append(command) or
+                        subprocess.CompletedProcess(command, 0 if len(calls) == 2 else 1))
+    bootstrap.ensure_installed(Path("the-python"))
+    assert len(calls) == 2 and "--use-feature=truststore" in calls[1] and "--use-feature=truststore" not in calls[0]
+    assert calls[1][:4] == ["the-python", "-m", "pip", "install"] and bootstrap.STAMP.exists()
 
 
 def test_environment_is_created_once(fake_project, monkeypatch):

@@ -389,7 +389,7 @@ them: rule 8 in `CLAUDE.md` says the assistant drafts and you post.
 
 | Symptom | Cause and fix |
 |---|---|
-| `/mcp` shows `sf-investigator` as failed | The server could not start. Run `python -m mcp_server` in the same terminal: an import error means the project is not installed in that Python (`python -m pip install -e .`), or `SFTI_PYTHON` points at another interpreter. |
+| `/mcp` shows `sf-investigator` as failed | The server could not start. Double-click `start.bat` / `start.command` once: it creates `.venv`, and from then on the server uses it even when Claude Code is opened some other way (from an editor, or a plain terminal). Still failing? Run `python -m mcp_server` in that terminal: an import error means neither that Python nor `.venv` has the packages (`python -m pip install -e .`), or `SFTI_PYTHON` points at another interpreter. |
 | "The Salesforce CLI ('sf') was not found on PATH" | Install it, reopen the terminal, and start Claude Code from that terminal. Or set `SFTI_SF_EXECUTABLE` to the full path (`sf.cmd` on Windows). |
 | "That org is not authenticated on this machine" | `sf org login web --alias <alias>` in your terminal, then `list_orgs`. |
 | A sandbox is reported as production | The classification failed closed. `org_info` shows the reason: the Organization record could not be read, or `IsSandbox` was not a boolean. Check the user's access to the Organization object and re-authenticate. |
