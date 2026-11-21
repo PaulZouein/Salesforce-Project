@@ -109,6 +109,22 @@ def operating_system() -> str:
     return "windows" if name.startswith("win") else "macos" if name == "darwin" else "linux"
 
 
+def _open_in_file_manager(folder: Path) -> None:
+    """Explorer on Windows, Finder on macOS, the desktop's file manager elsewhere: a folder, never a program."""
+    import subprocess
+
+    try:
+        if os.name == "nt":
+            os.startfile(str(folder))  # type: ignore[attr-defined]  # noqa: S606 - opens a folder in Explorer
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise WorkspaceError("The folder could not be opened on this computer.",
+                             hint=f"It is {folder}. ({type(exc).__name__})") from None
+
+
 class ViewCache:
     """Recent answers for the pages that run a command-line tool, which takes seconds each time.
 
@@ -152,6 +168,8 @@ class App:
         self.demo = False
         self._inv: Investigator | None = None
         self.cache = ViewCache()
+        #: How "Open the folder" opens one; replaced in tests, where no file manager may appear.
+        self.folder_opener: Callable[[Path], None] | None = None
         self.runner = agent.Runner(self.root, self.investigator, self.child_env)
         configured = os.environ.get("SFTI_SF_EXECUTABLE", "")
         if demo or (configured and "simulator" in Path(configured).parts):
@@ -346,6 +364,15 @@ class App:
         print(f"Connected the org '{alias}' ({connected['org_id']}).", file=sys.stderr, flush=True)
         return {"connected": connected}
 
+    def open_folder(self, key: str) -> dict[str, Any]:
+        """Open a ticket's folder in Explorer, Finder or the file manager of this computer. Nothing else."""
+        folder = self.investigator().workspace.ticket_dir(validate_ticket_key(key))
+        if not folder.is_dir():
+            raise WorkspaceError(f"There is no folder for {key}.")
+        opener = self.folder_opener or _open_in_file_manager
+        opener(folder)
+        return {"opened": f"tickets/{folder.name}"}
+
     def sample_ticket(self) -> dict[str, Any]:
         from simulator import demo
         return {"key": demo.KEY, "text": demo.TICKET_TEXT.read_text(encoding="utf-8"), "org": demo.PROD,
@@ -404,7 +431,7 @@ class App:
         return {"key": ticket["key"], "text": "\n".join(lines)}
 
 
-_TICKET_ROUTE = re.compile(r"^/api/tickets/([^/]+)(?:/(run|cancel|events|note|attachments))?\Z")
+_TICKET_ROUTE = re.compile(r"^/api/tickets/([^/]+)(?:/(run|cancel|events|note|attachments|folder))?\Z")
 _ORG_ROUTE = re.compile(r"^/api/orgs/([^/]+)\Z")
 _MEMORY_ROUTE = re.compile(r"^/api/memory/(00D[A-Za-z0-9]{12,15})(?:/(verify|search))?\Z")
 _JIRA_ROUTE = re.compile(r"^/api/jira/([^/]+)\Z")
@@ -662,6 +689,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     return tickets.save_attachment(inv(), key, body.get("name"), _decode(body.get("content_base64")))
 
                 return self._guarded(attach)
+            if match and match.group(2) == "folder":
+                return self._guarded(lambda: app.open_folder(match.group(1)))
             if match and match.group(2) == "cancel":
                 return self._guarded(lambda: {"cancelled": app.runner.cancel(match.group(1))})
             self._error(HTTPStatus.NOT_FOUND, "Not found.")

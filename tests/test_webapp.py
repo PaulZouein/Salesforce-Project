@@ -1173,3 +1173,16 @@ def test_create_ticket_function_validates_too(project, tmp_path):
     app = App(root=project.root, demo=True, demo_state=tmp_path / "direct-state")
     with pytest.raises(InputValidationError):
         tickets.create_ticket(app.investigator(), TICKET_TEXT, "   ")
+
+
+def test_the_ticket_folder_opens_from_the_page(web, project):
+    """Opens tickets/<KEY> in the file manager of this computer: that folder, and only for a real ticket."""
+    submit(web)
+    opened = []
+    web.app.folder_opener = opened.append
+    status, answer = web.post("/api/tickets/DEMO-101/folder", {})
+    assert status == 200 and answer["opened"] == "tickets/DEMO-101"
+    assert opened == [project.ticket("DEMO-101").resolve()] or opened == [project.ticket("DEMO-101")]
+    assert web.post("/api/tickets/NOPE-9/folder", {})[0] == 400 and len(opened) == 1
+    assert web.post("/api/tickets/..%2F..%2Fcore/folder", {})[0] in (400, 404) and len(opened) == 1
+    assert web.post("/api/tickets/DEMO-101/folder", {}, token=False)[0] == 403 and len(opened) == 1

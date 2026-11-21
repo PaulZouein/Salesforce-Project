@@ -41,7 +41,15 @@ function toast(text) {
   const el = $("#toast"); el.textContent = text; el.classList.add("show");
   clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("show"), 1800);
 }
-async function copyText(text, what) {
+async function copyText(text, what, html) {
+  if (html && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+    // Both forms: a rich editor (Jira, email, Teams) keeps the headings and lists; a plain field gets the text.
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
+      toast((what || "Copied") + " to the clipboard, with its formatting"); return;
+    } catch (error) { /* fall back to plain text below */ }
+  }
   try { await navigator.clipboard.writeText(text); toast((what || "Copied") + " to the clipboard"); }
   catch (error) {
     const area = document.createElement("textarea"); area.value = text; document.body.appendChild(area);
@@ -190,7 +198,10 @@ function route() {
 }
 document.addEventListener("click", event => {
   const copy = event.target.closest("[data-copy]");
-  if (copy) { copyText(copy.dataset.copy, "Copied"); }
+  if (copy) {
+    const from = copy.dataset.copyHtmlFrom ? document.querySelector(copy.dataset.copyHtmlFrom) : null;
+    copyText(copy.dataset.copy, "Copied", from ? from.innerHTML : null);
+  }
 });
 window.addEventListener("hashchange", route);
 $("#skip").onclick = event => { event.preventDefault(); main.setAttribute("tabindex", "-1"); main.focus(); };
@@ -665,6 +676,7 @@ async function viewTicket(key) {
         <p class="small muted">${hasResult ? "Something to add, or an answer to a question?" : "Anything to add before it starts?"} A record Id, a correction, a screenshot, an exported log. It is saved with the ticket; the next run reads it and continues from what is already there instead of starting again.</p>
         <textarea id="note" class="short" placeholder="For example: it also happens for cases created from email, see case 500…"></textarea>
         <div class="row" style="margin:10px 0"><label class="btn sm" for="file" style="margin:0">Attach a file</label><input type="file" id="file" hidden>
+          <button class="btn sm" id="open-folder" title="Open tickets/${esc(key)} in Explorer or Finder">Open the folder</button>
           <span class="files" id="files">${(t.attachments || []).map(name => `<span class="chip">${esc(name)}</span>`).join("")}</span></div>
         <div id="info-error"></div>
         ${hasResult && STATUS.claude.available ? savingControls(t.economy, t.budget_usd) : ""}
@@ -687,7 +699,7 @@ async function viewTicket(key) {
         `<div class="banner info" style="margin-top:16px">Nothing was deployed. Apply the change yourself, or ask the investigator in Claude Code with mode <code>apply</code>, where every deploy asks for your approval and production is refused.</div>`;
       else if (tab === "report") box.innerHTML = `<div class="prose">${t.report_html}</div>`;
       else if (tab === "comment") box.innerHTML = `<div class="banner warn">A draft. Nothing is posted anywhere: read it, then paste it into the ticket yourself.</div>
-        <div class="prose">${t.comment_html}</div><button class="btn primary" style="margin-top:12px" data-copy="${esc((t.comment_markdown || "").replace(/^<!--[\s\S]*?-->\s*/, ""))}">Copy the comment</button>`;
+        <div class="prose" id="comment-prose">${t.comment_html}</div><button class="btn primary" style="margin-top:12px" data-copy-html-from="#comment-prose" data-copy="${esc((t.comment_markdown || "").replace(/^<!--[\s\S]*?-->\s*/, ""))}">Copy the comment</button>`;
       else if (tab === "evidence") box.innerHTML = `<p class="small muted">Files saved in <code>tickets/${esc(t.key)}/</code>. Query results are stored with personal data redacted.</p>
         <div class="tablewrap"><table><thead><tr><th>Kind</th><th>File</th><th>What it holds</th></tr></thead><tbody>${t.evidence.map(a => `
           <tr><td>${esc(String(a.kind).replace(/_/g, " "))}</td><td><code>${esc(a.path)}</code></td><td>${esc(a.description)}</td></tr>`).join("")}</tbody></table></div>`;
@@ -729,6 +741,11 @@ async function viewTicket(key) {
           $("#ticket-error").innerHTML = errorBox(error); window.scrollTo(0, 0); return;
         }
       }
+    };
+    const folderButton = $("#open-folder");
+    if (folderButton) folderButton.onclick = async () => {
+      try { await api(`/api/tickets/${encodeURIComponent(key)}/folder`, { method: "POST", body: {} }); toast("Opened the ticket's folder"); }
+      catch (error) { $("#info-error").innerHTML = errorBox(error); }
     };
     const file = $("#file");
     if (file) file.onchange = async () => {

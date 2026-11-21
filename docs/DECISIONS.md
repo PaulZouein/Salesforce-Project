@@ -233,6 +233,7 @@ reached an org. Every fix below has a test; the simulator was changed to answer 
 | 116 | **`start.bat` and `start.command` open the Python download page** when Python is missing, besides saying what to do. | One step less on a computer that has never had Python. |
 | 117 | **A failed first install is tried again with the computer's own certificates** (`pip --use-feature=truststore`), and the final message says how to set a company proxy. | A company network that inspects HTTPS signs pages with a certificate the computer trusts and Python's own list does not. Newer pip already uses the computer's store and only notes it; the pip that comes with Python 3.11 needs the option. |
 | 118 | **`python -m mcp_server` hands over to the project's `.venv`** when the Python that started it lacks the packages. | `.mcp.json` (owner-only) starts the server with `${SFTI_PYTHON:-python}`; only the start files set `SFTI_PYTHON`, so Claude Code opened from an editor or a plain terminal started a Python without the packages and the tools failed to load. Tested with a bare Python and a real handshake. |
+| 119 | **"Copy the comment" copies it formatted and as text**; **"Open the folder"** opens the ticket's folder in Explorer or Finder (or shows its path where there is no file manager). | Pasting into Jira, an email or Teams keeps the headings and lists, and a plain field still gets the Markdown. The folder holds the evidence and the fix, which people look at in their own editor. Checked in a browser: the clipboard held both forms. |
 
 ## Open points for the owner
 
